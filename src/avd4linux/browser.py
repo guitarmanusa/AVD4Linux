@@ -41,9 +41,9 @@ class AVDBrowserView(Gtk.Box):
 
         # Setup WebKit settings
         settings = WebKit.Settings()
-        settings.set_enable_developer_extras(True)
+        settings.set_enable_developer_extras(False)
         settings.set_enable_smooth_scrolling(True)
-        settings.set_enable_webgl(True)
+        settings.set_enable_webgl(False)
         settings.set_javascript_can_open_windows_automatically(False)
 
         # Modern Chrome/Edge user agent with AVD4Linux client identifier

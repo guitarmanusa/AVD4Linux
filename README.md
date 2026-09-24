@@ -96,8 +96,6 @@ AVD4Linux bridges modern Linux desktop security standards with Microsoft's Azure
   - The window header bar features a live smart card monitor that displays card reader presence and card insertion status in real time.
 - **Direct `.rdp` File Launcher**:
   - Includes an **"Open .rdp"** button in the header to launch any standalone `.rdp` connection file directly into FreeRDP 3 with smart card redirection and hardware acceleration.
-- **Developer Tools**:
-  - Press **F12** at any time to open the WebKit Developer Inspector (DOM, Console, Network) to diagnose connection flows.
 
 ---
 

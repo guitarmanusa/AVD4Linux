@@ -65,7 +65,8 @@ class RDPSessionManager:
                     tenant_id = line.split(":", 2)[2].strip()
                     break
 
-            if tenant_id:
+            import re
+            if tenant_id and re.fullmatch(r"^[0-9a-fA-F\-]{36}$", tenant_id):
                 # Use sovereign DoD login.microsoftonline.us authority with use-tenantid:on
                 # and specify avd-access redirect URI to https://login.microsoftonline.com/common/oauth2/nativeclient
                 # which is the exact registered redirect URI for client a85cf173-4192-42f8-81fa-777a763e6e2c
@@ -74,6 +75,8 @@ class RDPSessionManager:
                     f"avd-scope:https://www.wvd.azure.us/.default,"
                     f"avd-access:https%%3A%%2F%%2Flogin.microsoftonline.com%%2Fcommon%%2Foauth2%%2Fnativeclient"
                 )
+            elif tenant_id:
+                logger.warning("Invalid tenant ID format in RDP file, ignoring.")
         except Exception as e:
             logger.warning("Could not parse tenant from .rdp file: %s", e)
 
@@ -145,6 +148,8 @@ class RDPSessionManager:
                     break
                 text = data.decode("utf-8", errors="replace")
                 buf += text
+                if len(buf) > 4096:
+                    buf = buf[-4096:]
 
                 for line in text.splitlines():
                     line_clean = line.strip()
