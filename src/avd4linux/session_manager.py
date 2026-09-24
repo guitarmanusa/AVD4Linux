@@ -44,7 +44,11 @@ class RDPSessionManager:
         if not self.executable:
             raise FileNotFoundError("xfreerdp3 not found on system")
 
-        rdp_path = str(Path(rdp_path).expanduser().resolve())
+        resolved_path = Path(rdp_path).expanduser().resolve()
+        if not resolved_path.is_file():
+            raise FileNotFoundError(f"RDP file not found: {resolved_path}")
+
+        rdp_path = str(resolved_path)
         args = [
             self.executable,
             rdp_path,
@@ -89,7 +93,9 @@ class RDPSessionManager:
         """Sends the OAuth redirect URL response into FreeRDP's stdin."""
         if self.master_fd is not None:
             try:
-                msg = redirect_url.strip() + "\n"
+                # Sanitize to strictly a single line to prevent terminal control injection
+                clean_url = redirect_url.splitlines()[0].strip() if redirect_url else ""
+                msg = clean_url + "\n"
                 logger.info("Feeding OAuth redirect URL to FreeRDP")
                 os.write(self.master_fd, msg.encode())
             except Exception as e:
@@ -201,5 +207,9 @@ class RDPSessionManager:
         if self.active_process and self.active_process.poll() is None:
             try:
                 self.active_process.terminate()
+                try:
+                    self.active_process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.active_process.kill()
             except Exception as e:
                 logger.warning("Error terminating FreeRDP: %s", e)

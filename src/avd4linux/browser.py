@@ -19,6 +19,14 @@ USER_DATA_DIR = Path.home() / ".local" / "share" / "avd4linux"
 WEB_DATA_DIR = USER_DATA_DIR / "webdata"
 DOWNLOADS_DIR = USER_DATA_DIR / "downloads"
 
+# Ensure secure application storage directories exist with user-only permissions (0o700)
+for _d in (USER_DATA_DIR, WEB_DATA_DIR, DOWNLOADS_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(_d, stat.S_IRWXU)
+    except Exception:
+        pass
+
 
 class AVDBrowserView(Gtk.Box):
     """Encapsulates WebKit.WebView with AVD-specific handlers."""
@@ -36,9 +44,10 @@ class AVDBrowserView(Gtk.Box):
         self.on_load_changed = on_load_changed
         self.on_pin_requested = on_pin_requested
 
-        WEB_DATA_DIR.mkdir(parents=True, exist_ok=True)
-        DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
-        os.chmod(DOWNLOADS_DIR, stat.S_IRWXU)
+        # Secure application storage directories with user-only permissions
+        for d in [USER_DATA_DIR, WEB_DATA_DIR, DOWNLOADS_DIR]:
+            d.mkdir(parents=True, exist_ok=True)
+            os.chmod(d, stat.S_IRWXU)
 
         # Setup WebKit settings
         settings = WebKit.Settings()
@@ -55,10 +64,6 @@ class AVDBrowserView(Gtk.Box):
         settings.set_user_agent(ua)
 
         # Configure network session with persistent storage
-        website_mgr = WebKit.WebsiteDataManager(
-            base_data_directory=str(WEB_DATA_DIR),
-            base_cache_directory=str(WEB_DATA_DIR / "cache"),
-        )
         self.network_session = WebKit.NetworkSession.new(
             data_directory=str(WEB_DATA_DIR),
             cache_directory=str(WEB_DATA_DIR / "cache"),
@@ -259,6 +264,7 @@ class AVDBrowserView(Gtk.Box):
                         pass
 
                 rdp_out.write_text(text, encoding="utf-8")
+                os.chmod(rdp_out, stat.S_IRUSR | stat.S_IWUSR)
                 logger.info("Prepared RDP file for FreeRDP: %s", rdp_out)
                 return str(rdp_out)
         except Exception as e:

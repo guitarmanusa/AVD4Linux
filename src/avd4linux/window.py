@@ -172,12 +172,16 @@ class AVDMainWindow(Adw.ApplicationWindow):
 
     def _on_open_rdp_clicked(self, btn: Gtk.Button) -> None:
         """Manual file picker to launch any .rdp file with FreeRDP."""
+        from gi.repository import Gio
         dialog = Gtk.FileDialog()
         dialog.set_title("Open RDP Connection File")
         f_filter = Gtk.FileFilter()
-        f_filter.set_name("RDP Files (*.rdp)")
+        f_filter.set_name("RDP Files (*.rdp, *.rdpw)")
         f_filter.add_pattern("*.rdp")
-        filters = Gtk.FilterListModel()
+        f_filter.add_pattern("*.rdpw")
+        store = Gio.ListStore.new(Gtk.FileFilter)
+        store.append(f_filter)
+        dialog.set_filters(store)
 
         dialog.open(self, None, self._on_file_dialog_finished)
 
@@ -186,7 +190,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
             file_obj = dialog.open_finish(result)
             if file_obj:
                 path = file_obj.get_path()
-                if path:
+                if path and Path(path).is_file():
                     self.show_toast(f"Launching {Path(path).name}...", timeout=4)
                     self._launch_freerdp(path)
         except Exception as e:
