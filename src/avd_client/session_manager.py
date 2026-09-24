@@ -68,9 +68,12 @@ class RDPSessionManager:
 
             if tenant_id:
                 # Use sovereign DoD login.microsoftonline.us authority with use-tenantid:on
-                # so the authentication target is the specific DoD tenant where @mail.mil exists
+                # and specify avd-access redirect URI to https://login.microsoftonline.com/common/oauth2/nativeclient
+                # which is the exact registered redirect URI for client a85cf173-4192-42f8-81fa-777a763e6e2c
                 args.append(
-                    f"/azure:ad:login.microsoftonline.us,use-tenantid:on,tenantid:{tenant_id},avd-scope:https://www.wvd.azure.us/.default"
+                    f"/azure:ad:login.microsoftonline.us,use-tenantid:on,tenantid:{tenant_id},"
+                    f"avd-scope:https://www.wvd.azure.us/.default,"
+                    f"avd-access:https%%3A%%2F%%2Flogin.microsoftonline.com%%2Fcommon%%2Foauth2%%2Fnativeclient"
                 )
         except Exception as e:
             logger.warning("Could not parse tenant from .rdp file: %s", e)
