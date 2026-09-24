@@ -1,7 +1,40 @@
 # AVD Linux Client — native AVD app with Smart Card redirection
 
 Native Linux desktop client for **Azure Virtual Desktop** (AVD) with **Smart
-Card (PIV/CAC) redirection**, targeting **Azure Commercial, GCC High and DoD**.
+Card (DoD CAC/PIV) redirection**, targeting **Azure Commercial, GCC High and DoD**.
+
+Built with **GTK 4**, **Libadwaita**, **WebKitGTK 6**, and **FreeRDP 3**.
+
+## Features
+
+- **Native Linux App**: Modern GNOME/Adwaita user interface with dark/light mode support.
+- **DoD CAC & PIV Smart Card Redirection**: Full MS-RDPESC smart card channel redirection via FreeRDP 3 and host PC/SC daemon (`pcscd`).
+- **Sovereign Cloud Switcher**:
+  - 🇺🇸 **Azure US DoD** (`rdweb.wvd.azure.us`)
+  - 🏛️ **Azure US Government (GCC High)** (`rdweb.wvd.azure.us`)
+  - 🌐 **Azure Commercial** (`rdweb.wvd.microsoft.com`)
+- **Live Smart Card Detection**: Real-time status indicator in the window title bar showing reader and card state (`Alcor Micro AU9540`, `DoD PIV`).
+- **Seamless RDP Launch**: Intercepts workspace connections and launches high-performance native FreeRDP 3 with smart card redirection and hardware acceleration.
+- **Direct .rdp Launcher**: "Open .rdp" button to launch any downloaded or custom RDP configuration file directly with FreeRDP 3.
+
+## Running the Application
+
+### From Application Menu
+Search for **"Azure Virtual Desktop"** in your GNOME / desktop application launcher.
+
+### From Terminal
+```bash
+# Launch default (DoD environment)
+bin/avd-linux
+
+# Or specify cloud target
+bin/avd-linux --cloud dod
+bin/avd-linux --cloud gcc
+bin/avd-linux --cloud commercial
+
+# Launch a specific .rdp file directly with Smart Card redirection
+bin/avd-linux --rdp ~/Downloads/my-desktop.rdp
+```
 
 ## Status
 
