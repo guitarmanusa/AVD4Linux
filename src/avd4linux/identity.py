@@ -31,7 +31,8 @@ from .clouds import CloudProfile, get_cloud
 
 CBA_SUBDOMAIN: Mapping[str, str] = {
     "commercial": "certauth.login.microsoftonline.com",
-    "usgov": "certauth.login.microsoftonline.us",
+    "gcc": "certauth.login.microsoftonline.us",
+    "dod": "certauth.login.microsoftonline.us",
 }
 
 # DoD CA-5x bundle already in the system trust store (verified Phase 1);
@@ -58,18 +59,16 @@ class CBAAuthorizationRequest:
     cloud: CloudProfile
     client_id: str
     redirect_uri: str
+    tenant: str = "common"
     pkce: PKCE = field(default_factory=PKCE)
     state: str = field(default_factory=lambda: secrets.token_urlsafe(24))
 
     def endpoint(self) -> str:
-        base = {
-            "commercial": "https://login.microsoftonline.com/",
-            "usgov": "https://login.microsoftonline.us/",
-        }[self.cloud.id]
-        return urlparse.urljoin(base, f"{self.cloud.tenant}/oauth2/v2.0/authorize")
+        base = self.cloud.authority
+        return urlparse.urljoin(base, f"{self.tenant}/oauth2/v2.0/authorize")
 
     def authorization_url(self) -> str:
-        return "?" and (
+        return (
             self.endpoint()
             + "?"
             + urlparse.urlencode(
@@ -77,7 +76,7 @@ class CBAAuthorizationRequest:
                     "client_id": self.client_id,
                     "response_type": "code",
                     "redirect_uri": self.redirect_uri,
-                    "scope": f"{self.cloud.resource_scope} {self.cloud.id}.{SCOPE_SUFFIX}",
+                    "scope": f"{self.cloud.resource_scope} openid profile offline_access",
                     "code_challenge": self.pkce.challenge,
                     "code_challenge_method": "S256",
                     "state": self.state,
@@ -86,7 +85,7 @@ class CBAAuthorizationRequest:
             )
         )
 
-    def token_request(self, code: str) -> dict[str, bytes]:
+    def token_request(self, code: str) -> dict[str, str]:
         """Body for the /oauth2/v2.0/token POST at the same cloud authority."""
         return {
             "grant_type": "authorization_code",
@@ -94,7 +93,7 @@ class CBAAuthorizationRequest:
             "code": code,
             "redirect_uri": self.redirect_uri,
             "code_verifier": self.pkce.verifier,
-            "scope": f"{self.cloud.resource_scope} {self.cloud.id}.{SCOPE_SUFFIX}",
+            "scope": f"{self.cloud.resource_scope} openid profile offline_access",
         }
 
 

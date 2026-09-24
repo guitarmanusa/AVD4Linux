@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 USER_DATA_DIR = Path.home() / ".local" / "share" / "avd4linux"
 WEB_DATA_DIR = USER_DATA_DIR / "webdata"
+DOWNLOADS_DIR = USER_DATA_DIR / "downloads"
 
 
 class AVDBrowserView(Gtk.Box):
@@ -35,7 +36,6 @@ class AVDBrowserView(Gtk.Box):
         self.on_title_changed = on_title_changed
         self.on_load_changed = on_load_changed
         self.on_pin_requested = on_pin_requested
-        self.cached_pin: Optional[str] = None
 
         WEB_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -131,16 +131,6 @@ class AVDBrowserView(Gtk.Box):
 
         if scheme == WebKit.AuthenticationScheme.CLIENT_CERTIFICATE_REQUESTED:
             from .smartcard import get_piv_tls_certificate
-            if self.cached_pin:
-                cert = get_piv_tls_certificate(pin=self.cached_pin)
-                if cert:
-                    logger.info("Providing PIV client certificate with cached PIN for %s", host)
-                    cred = WebKit.Credential.new_for_certificate(
-                        cert, WebKit.CredentialPersistence.FOR_SESSION
-                    )
-                    request.authenticate(cred)
-                    return True
-
             if self.on_pin_requested:
                 logger.info("Prompting user for CAC PIN to unlock PIV Authentication key for %s", host)
                 return self.on_pin_requested(request)
@@ -207,12 +197,11 @@ class AVDBrowserView(Gtk.Box):
         if not safe_filename:
             safe_filename = "session.rdp"
 
-        tmp_dir = Path(tempfile.gettempdir()) / "avd4linux-downloads"
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        # Lock down directory permissions to current user only
-        os.chmod(tmp_dir, stat.S_IRWXU)
+        # Secure user-specific downloads directory (never shared /tmp)
+        DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(DOWNLOADS_DIR, stat.S_IRWXU)
 
-        dest = str(tmp_dir / safe_filename)
+        dest = str(DOWNLOADS_DIR / safe_filename)
         logger.info("Saving downloaded file to: %s", dest)
         # WebKit requires an absolute filesystem path, NOT a URI
         download.set_destination(dest)

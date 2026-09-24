@@ -73,7 +73,7 @@ class RDPSessionManager:
                 args.append(
                     f"/azure:ad:login.microsoftonline.us,use-tenantid:on,tenantid:{tenant_id},"
                     f"avd-scope:https://www.wvd.azure.us/.default,"
-                    f"avd-access:https%%3A%%2F%%2Flogin.microsoftonline.com%%2Fcommon%%2Foauth2%%2Fnativeclient"
+                    f"avd-access:https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient"
                 )
             elif tenant_id:
                 logger.warning("Invalid tenant ID format in RDP file, ignoring.")
@@ -102,8 +102,9 @@ class RDPSessionManager:
         on_auth_url_needed: Optional[Callable[[str], None]] = None,
         extra_args: Optional[List[str]] = None,
     ) -> subprocess.Popen:
-        """Launches FreeRDP 3 asynchronously using a pseudo-terminal."""
+        """Launches FreeRDP 3 asynchronously using a pseudo-terminal with ECHO disabled."""
         import pty
+        import termios
         cmd = self.build_rdp_file_args(rdp_path, extra_args)
         safe_cmd = [
             arg if not arg.startswith(("/azure:ad:", "/access-token:", "/gateway:"))
@@ -119,6 +120,14 @@ class RDPSessionManager:
             env["WAYLAND_DISPLAY"] = "wayland-0"
 
         master, slave = pty.openpty()
+        # Disable ECHO on the slave PTY so fed credentials/OAuth codes are not echoed back to logs
+        try:
+            attr = termios.tcgetattr(slave)
+            attr[3] = attr[3] & ~termios.ECHO
+            termios.tcsetattr(slave, termios.TCSANOW, attr)
+        except Exception as e:
+            logger.warning("Could not disable ECHO on PTY slave: %s", e)
+
         proc = subprocess.Popen(
             cmd,
             env=env,
@@ -154,7 +163,11 @@ class RDPSessionManager:
                 for line in text.splitlines():
                     line_clean = line.strip()
                     if line_clean:
-                        logger.debug("[FreeRDP] %s", line_clean)
+                        # Mask any lines that might contain OAuth authorization codes or tokens
+                        if any(k in line_clean.lower() for k in ["code=", "token=", "bearer", "access_token"]):
+                            logger.debug("[FreeRDP] [sensitive data masked]")
+                        else:
+                            logger.debug("[FreeRDP] %s", line_clean)
 
                 if "Browse to:" in buf and "Paste redirect URL here:" in buf:
                     match = re.search(r"Browse to:\s*(https://\S+)", buf)
