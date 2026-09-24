@@ -3,7 +3,19 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import subprocess
 import sys
+
+# Prevent WebKitGTK bubblewrap crash on systems with restricted user namespaces
+# ("bwrap: setting up uid map: Permission denied")
+if "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS" not in os.environ:
+    try:
+        res = subprocess.run(["bwrap", "--ro-bind", "/", "/", "true"], capture_output=True, timeout=1)
+        if res.returncode != 0:
+            os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
+    except Exception:
+        os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
 
 import gi
 
