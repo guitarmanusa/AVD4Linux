@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.avd4linux.AVD4Linux</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>AVD4Linux</name>
+  <summary>Native Linux client for Azure Virtual Desktop with Smart Card redirection</summary>
+  
+  <description>
+    <p>
+      AVD4Linux is a modern, native GTK 4 and Libadwaita client designed for accessing
+      Azure Virtual Desktop (AVD) workspaces with first-class Smart Card (DoD CAC / PIV)
+      redirection support.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Full support for Azure Virtual Desktop in Azure US DoD, Azure US Government (GCC High), and Azure Commercial.</li>
+      <li>Native Smart Card / DoD CAC hardware token redirection via FreeRDP 3.</li>
+      <li>Seamless Entra ID Certificate-Based Authentication (CBA) via host PKCS#11.</li>
+      <li>Automatic Azure Virtual Desktop workspace resource detection and direct FreeRDP session launching.</li>
+      <li>Hardware-accelerated graphics rendering and audio redirection.</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">org.avd4linux.AVD4Linux.desktop</launchable>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#0078D4</color>
+    <color type="primary" scheme_preference="dark">#004E8C</color>
+  </branding>
+
+  <categories>
+    <category>Network</category>
+    <category>RemoteAccess</category>
+    <category>Utility</category>
+  </categories>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.9.0" date="2026-09-24">
+      <description>
+        <p>Initial release of AVD4Linux with support for:</p>
+        <ul>
+          <li>Azure Virtual Desktop DoD sovereign cloud (rdweb.wvd.azure.us) and DoD sovereign tenants.</li>
+          <li>DoD CAC / PIV Certificate-Based Authentication (CBA).</li>
+          <li>FreeRDP 3 hardware smartcard channel redirection.</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>

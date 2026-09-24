@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# AVD4Linux — Azure Virtual Desktop for Linux launcher
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH:-}"
+
+# Ensure systemd user p11-kit bridge is active if available
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user start p11-kit-server.service 2>/dev/null || true
+fi
+
+exec python3 -m avd4linux.app "$@"

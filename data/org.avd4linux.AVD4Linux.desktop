@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=AVD4Linux
+Comment=Native Linux client for Azure Virtual Desktop with Smart Card (DoD CAC/PIV) redirection
+Exec=avd4linux %U
+Icon=org.avd4linux.AVD4Linux
+Terminal=false
+Type=Application
+Categories=Network;RemoteAccess;GTK;
+MimeType=application/x-rdp;
+Keywords=AVD4Linux;AVD;Azure Virtual Desktop;RDP;Azure;Remote;Desktop;Smartcard;CAC;PIV;DoD;
+StartupNotify=true
+StartupWMClass=org.avd4linux.AVD4Linux

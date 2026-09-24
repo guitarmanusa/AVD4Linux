@@ -1,0 +1,85 @@
+app-id: org.avd4linux.AVD4Linux
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+command: avd4linux
+
+finish-args:
+  # Display & Windowing
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+
+  # Audio
+  - --socket=pulseaudio
+
+  # Network (Entra ID, AVD Gateway, WebSocket)
+  - --share=network
+
+  # Hardware Smart Card / CAC Redirection
+  - --device=all
+  - --system-talk-name=org.debian.pcscd
+  - --filesystem=/run/pcscd
+  - --filesystem=xdg-run/p11-kit
+
+  # Downloads & Configuration
+  - --filesystem=xdg-download
+  - --filesystem=~/.config/avd4linux:create
+
+modules:
+  # 1. PC/SC Lite client library (to communicate with host pcscd socket)
+  - name: pcsc-lite
+    config-opts:
+      - --disable-libudev
+      - --disable-libsystemd
+      - --without-systemdsystemunitdir
+    sources:
+      - type: archive
+        url: https://pcsclite.apdu.fr/files/pcsc-lite-2.0.3.tar.bz2
+        sha256: cd45b40cf6238b7e2832eddd1f016db90abecf1f335b7194f4a3aa8be8217d84
+
+  # 2. OpenSC (PIV PKCS#11 provider)
+  - name: opensc
+    config-opts:
+      - --disable-man
+      - --disable-doc
+      - --disable-assert
+    sources:
+      - type: archive
+        url: https://github.com/OpenSC/OpenSC/releases/download/0.25.1/opensc-0.25.1.tar.gz
+        sha256: 09dbb1845fa8a38ad1c59bb76ae680ce6ecda80c98f997cb244791a8ef0a0ff4
+
+  # 3. FreeRDP 3 (High-performance RDP client with Smart Card & AAD support)
+  - name: freerdp3
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DWITH_SMARTCARD=ON
+      - -DWITH_PCSC=ON
+      - -DWITH_PKCS11=ON
+      - -DWITH_PULSE=ON
+      - -DWITH_WAYLAND=ON
+      - -DWITH_X11=ON
+      - -DWITH_FFMPEG=ON
+      - -DWITH_CAIRO=ON
+      - -DWITH_AAD=ON
+      - -DWITH_CLIENT_COMMON=ON
+      - -DWITH_SERVER=OFF
+      - -DWITH_CHANNELS=ON
+    sources:
+      - type: archive
+        url: https://pub.freerdp.com/releases/freerdp-3.10.2.tar.gz
+        sha256: 28bc45cf25178d8a7c29e1eb13e00cf0ca4ea63c784f938b813155f9e20a4b78
+
+  # 4. AVD4Linux Native Client Application
+  - name: avd4linux
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} .
+      - install -Dm644 data/org.avd4linux.AVD4Linux.desktop ${FLATPAK_DEST}/share/applications/org.avd4linux.AVD4Linux.desktop
+      - install -Dm644 data/org.avd4linux.AVD4Linux.metainfo.xml ${FLATPAK_DEST}/share/metainfo/org.avd4linux.AVD4Linux.metainfo.xml
+      - install -Dm644 data/org.avd4linux.AVD4Linux.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.avd4linux.AVD4Linux.svg
+    sources:
+      - type: dir
+        path: ../..
