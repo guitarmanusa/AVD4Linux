@@ -100,6 +100,18 @@ class AVDMainWindow(Adw.ApplicationWindow):
         self.toast_overlay = Adw.ToastOverlay()
         root_box.append(self.toast_overlay)
 
+        # F12 Web Inspector Shortcut
+        key_ctrl = Gtk.EventControllerKey()
+        def on_key_pressed(controller, keyval, keycode, state):
+            from gi.repository import Gdk
+            if keyval == Gdk.KEY_F12:
+                inspector = self.browser.web_view.get_inspector()
+                inspector.show()
+                return True
+            return False
+        key_ctrl.connect("key-pressed", on_key_pressed)
+        self.add_controller(key_ctrl)
+
         # Browser View
         self.browser = AVDBrowserView(
             on_rdp_file_ready=self._on_rdp_downloaded,

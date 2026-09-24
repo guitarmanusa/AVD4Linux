@@ -82,6 +82,7 @@ class AVDBrowserView(Gtk.Box):
         self.web_view.connect("notify::title", self._on_title)
         self.web_view.connect("load-changed", self._on_load_state_changed)
         self.web_view.connect("authenticate", self._on_authenticate)
+        self.web_view.connect("decide-policy", self._on_decide_policy)
 
     def load_url(self, url: str) -> None:
         """Navigates to the specified URL."""
@@ -158,6 +159,35 @@ class AVDBrowserView(Gtk.Box):
                 return self.on_pin_requested(request)
             return False
 
+        return False
+
+    def _on_decide_policy(
+        self,
+        web_view: WebKit.WebView,
+        decision: WebKit.PolicyDecision,
+        decision_type: WebKit.PolicyDecisionType,
+    ) -> bool:
+        """Intercepts navigation and response policy decisions to capture RDP files."""
+        if decision_type == WebKit.PolicyDecisionType.RESPONSE:
+            response = decision.get_response()
+            mime = (response.get_mime_type() or "").lower()
+            suggested = (response.get_suggested_filename() or "").lower()
+            uri = (response.get_uri() or "").lower()
+            if "rdp" in mime or suggested.endswith(".rdp") or "rdp" in uri:
+                logger.info(
+                    "Intercepting RDP response for FreeRDP launch: mime=%s, file=%s",
+                    mime,
+                    suggested,
+                )
+                decision.download()
+                return True
+        elif decision_type == WebKit.PolicyDecisionType.NAVIGATION_ACTION:
+            action = decision.get_navigation_action()
+            uri = (action.get_request().get_uri() or "").lower()
+            if uri.startswith("ms-rd:") or uri.endswith(".rdp"):
+                logger.info("Intercepting RDP navigation: %s", uri)
+                decision.download()
+                return True
         return False
 
     def _on_download_started(
