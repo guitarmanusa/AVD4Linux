@@ -99,7 +99,7 @@ def smartcard_flags(reader: str | None = None,
     if reader:
         flags.append(f"/smartcard:{reader}")
     else:
-        flags.append("/smartcard:")
+        flags.append("/smartcard")
     if smartcard_logon:
         flags.append("/smartcard-logon")
         flags.append("/sec:nla")

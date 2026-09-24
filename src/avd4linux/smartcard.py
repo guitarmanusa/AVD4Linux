@@ -120,21 +120,25 @@ class SmartCardMonitor:
 def get_piv_certificate_uri() -> Optional[str]:
     """Finds the PKCS#11 URI for the PIV Authentication certificate."""
     import subprocess
-    cmd = ["p11tool", "--list-all-certs", "pkcs11:model=PKCS%2315%20emulated;type=cert"]
-    try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        current_url = None
-        for line in res.stdout.splitlines():
-            line = line.strip()
-            if line.startswith("URL:"):
-                current_url = line.split("URL:", 1)[1].strip()
-            elif "Certificate for PIV Authentication" in line or "ID: 01" in line:
-                if current_url:
-                    return current_url
-        if current_url:
-            return current_url
-    except Exception as e:
-        logger.error("Error finding PIV certificate URI: %s", e)
+    queries = [
+        ["p11tool", "--list-all-certs", "pkcs11:model=PKCS%2315%20emulated;type=cert"],
+        ["p11tool", "--list-all-certs", "pkcs11:type=cert"],
+    ]
+    for cmd in queries:
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            current_url = None
+            for line in res.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("URL:"):
+                    current_url = line.split("URL:", 1)[1].strip()
+                elif "Certificate for PIV Authentication" in line or "ID: 01" in line:
+                    if current_url:
+                        return current_url
+            if current_url:
+                return current_url
+        except Exception as e:
+            logger.error("Error finding PIV certificate URI: %s", e)
     return None
 
 

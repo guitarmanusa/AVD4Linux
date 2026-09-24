@@ -50,6 +50,9 @@ class AVDApplication(Adw.Application):
         self.initial_cloud = parsed.cloud
         self.activate()
 
+        if self.window and parsed.cloud:
+            self.window.set_cloud(parsed.cloud)
+
         if parsed.rdp and self.window:
             self.window._launch_freerdp(parsed.rdp)
 

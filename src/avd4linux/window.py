@@ -132,6 +132,11 @@ class AVDMainWindow(Adw.ApplicationWindow):
     def _on_title_changed(self, title: str) -> None:
         pass
 
+    def set_cloud(self, cloud_id: str) -> None:
+        """Switches the active sovereign cloud environment programmatically."""
+        if cloud_id in self.cloud_keys and cloud_id != self.current_cloud_id:
+            self.cloud_dropdown.set_selected(self.cloud_keys.index(cloud_id))
+
     def _poll_smartcard(self) -> bool:
         """Periodic background check for Smart Card."""
         status = self.smartcard_monitor.check_status()
@@ -250,6 +255,15 @@ class AVDMainWindow(Adw.ApplicationWindow):
             if "nativeclient" in uri and "code=" in uri:
                 complete_auth(uri)
 
+        def on_close_request(win):
+            nonlocal handled
+            if not handled:
+                handled = True
+                logger.info("User closed authorization window before completing")
+                self.session_manager.terminate_session()
+            return False
+
+        auth_win.connect("close-request", on_close_request)
         auth_view.connect("decide-policy", on_auth_policy)
         auth_view.connect("load-changed", on_auth_load)
 

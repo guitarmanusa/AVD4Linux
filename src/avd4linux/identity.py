@@ -5,8 +5,7 @@ Mirrors the flow Microsoft's Windows App performs, adapted to Linux:
   1. WebKitGTK/WebKit opens the Entra ID **Certificate Authentication** page
      (`certauth.login.microsoftonline.us` / `certauth.login.microsoftonline.com`).
      WebKit's TLS client-certificate hook terminates mutual TLS using the PIV
-     Authentication certificate from the host smartcard (exposed over the
-     p11-kit RPC bridge — see `tools/p11kit_bridge.py`).
+     Authentication certificate from the host smartcard (exposed via PKCS#11 / p11-kit).
   2. WebKitGTK keeps a silent background exchange going on the URL known to
      forward to the ARM AVD feed (per-cloud, chosen automatically).
   3. We receive an authorization code via OAuth 2.0 (openid + profile + offline)

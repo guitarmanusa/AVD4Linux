@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import os
 import stat
-import tempfile
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -38,6 +37,8 @@ class AVDBrowserView(Gtk.Box):
         self.on_pin_requested = on_pin_requested
 
         WEB_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(DOWNLOADS_DIR, stat.S_IRWXU)
 
         # Setup WebKit settings
         settings = WebKit.Settings()
