@@ -219,20 +219,53 @@ class AVDMainWindow(Adw.ApplicationWindow):
         gi.require_version("WebKit", "6.0")
         from gi.repository import WebKit
 
-        # Use the existing authenticated network session so credentials & cookies match
+        auth_win = Adw.Window(transient_for=self, modal=True, title="Authorizing Desktop Session")
+        auth_win.set_default_size(520, 640)
+
+        header = Adw.HeaderBar()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.append(header)
+
         auth_view = WebKit.WebView(network_session=self.browser.network_session)
-        # Keep reference to prevent GC while loading
-        self._active_auth_view = auth_view
+        auth_view.set_hexpand(True)
+        auth_view.set_vexpand(True)
+        box.append(auth_view)
+        auth_win.set_content(box)
+
+        # Automatically reuse CAC certificate and cached PIN
+        auth_view.connect("authenticate", self.browser._on_authenticate)
+
+        handled = False
+
+        def complete_auth(uri: str):
+            nonlocal handled
+            if handled:
+                return
+            handled = True
+            logger.info("Captured OAuth redirect code for FreeRDP: %s", uri[:80])
+            self.session_manager.feed_auth_url(uri)
+            self.show_toast("Opening remote desktop session...", timeout=4)
+            GLib.idle_add(auth_win.close)
+
+        def on_auth_policy(view, decision, decision_type):
+            if decision_type == WebKit.PolicyDecisionType.NAVIGATION_ACTION:
+                action = decision.get_navigation_action()
+                uri = action.get_request().get_uri() or ""
+                if "nativeclient" in uri and "code=" in uri:
+                    decision.ignore()
+                    complete_auth(uri)
+                    return True
+            return False
 
         def on_auth_load(view, event):
             uri = view.get_uri() or ""
             if "nativeclient" in uri and "code=" in uri:
-                logger.info("Captured OAuth redirect code for FreeRDP: %s", uri[:60])
-                self.session_manager.feed_auth_url(uri)
-                self.show_toast("Opening remote desktop session...", timeout=4)
-                self._active_auth_view = None
+                complete_auth(uri)
 
+        auth_view.connect("decide-policy", on_auth_policy)
         auth_view.connect("load-changed", on_auth_load)
+
+        auth_win.present()
         auth_view.load_uri(auth_url)
 
     def _on_session_exit(self, exit_code: int) -> None:
