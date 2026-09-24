@@ -205,9 +205,35 @@ class AVDMainWindow(Adw.ApplicationWindow):
             self.session_manager.launch_rdp_file(
                 rdp_path,
                 on_exit=lambda rc: GLib.idle_add(self._on_session_exit, rc),
+                on_auth_url_needed=lambda url: GLib.idle_add(self._on_auth_url_needed, url),
             )
         except Exception as e:
             self.show_toast(f"Failed to launch FreeRDP: {e}", timeout=6)
+
+    def _on_auth_url_needed(self, auth_url: str) -> None:
+        """Handles FreeRDP's AAD OAuth authorization challenge using the active WebKit session."""
+        logger.info("Handling FreeRDP AAD challenge: %s", auth_url)
+        self.show_toast("Authorizing desktop session with Entra ID...", timeout=6)
+
+        import gi
+        gi.require_version("WebKit", "6.0")
+        from gi.repository import WebKit
+
+        # Use the existing authenticated network session so credentials & cookies match
+        auth_view = WebKit.WebView(network_session=self.browser.network_session)
+        # Keep reference to prevent GC while loading
+        self._active_auth_view = auth_view
+
+        def on_auth_load(view, event):
+            uri = view.get_uri() or ""
+            if "nativeclient" in uri and "code=" in uri:
+                logger.info("Captured OAuth redirect code for FreeRDP: %s", uri[:60])
+                self.session_manager.feed_auth_url(uri)
+                self.show_toast("Opening remote desktop session...", timeout=4)
+                self._active_auth_view = None
+
+        auth_view.connect("load-changed", on_auth_load)
+        auth_view.load_uri(auth_url)
 
     def _on_session_exit(self, exit_code: int) -> None:
         if exit_code == 0:
