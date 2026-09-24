@@ -316,7 +316,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
                     from gi.repository import WebKit
                     from .smartcard import get_piv_tls_certificate
                     if response == "unlock":
-                        pin = entry.get_text().strip()
+                        pin = entry.get_text()
                         if pin:
                             logger.info("Submitting CAC PIN and Certificate to WebKit")
                             scheme = request.get_scheme()
@@ -324,8 +324,10 @@ class AVDMainWindow(Adw.ApplicationWindow):
                                 cred = WebKit.Credential.new_for_certificate_pin(
                                     pin, WebKit.CredentialPersistence.FOR_SESSION
                                 )
+                                del pin
                             else:
                                 cert = get_piv_tls_certificate(pin=pin)
+                                del pin
                                 if cert:
                                     logger.info("Loaded PIV certificate with private key unlocked by PIN")
                                     cred = WebKit.Credential.new_for_certificate(

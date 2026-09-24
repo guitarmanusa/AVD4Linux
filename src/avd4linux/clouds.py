@@ -72,13 +72,17 @@ def get_cloud(cloud_id: str) -> CloudProfile:
     return CLOUDS[key]
 
 
-def freerdp_arm_flags(cloud: CloudProfile, token: str,
+def freerdp_arm_flags(cloud: CloudProfile, token: str | None = None,
                       gateway: str | None = None) -> list[str]:
     """Base FreeRDP 3 flags for AVD ARM gateway + Entra ID auth.
 
     gateway defaults to the ARM gateway advertised by the AVD feed;
     when a .rdp resource is used, FreeRDP reads it from the file and only
     `/gateway:type:arm` + `/sec:aad` need explicit confirmation.
+
+    Note: Sensitive bearer/access tokens must never be appended as CLI flags
+    (e.g. /access-token:) to prevent exposure via the Linux /proc/<pid>/cmdline
+    process table; tokens should be fed over the PTY stream or stdin.
     """
     flags = [
         "/gateway:type:arm",
@@ -87,8 +91,6 @@ def freerdp_arm_flags(cloud: CloudProfile, token: str,
     ]
     if gateway:
         flags.append(f"/gateway:g:{gateway}")
-    if token:
-        flags.append(f"/access-token:{token}")
     return flags
 
 

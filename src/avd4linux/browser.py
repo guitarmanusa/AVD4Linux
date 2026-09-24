@@ -55,6 +55,9 @@ class AVDBrowserView(Gtk.Box):
         settings.set_enable_smooth_scrolling(True)
         settings.set_enable_webgl(False)
         settings.set_javascript_can_open_windows_automatically(False)
+        settings.set_allow_file_access_from_file_urls(False)
+        settings.set_allow_universal_access_from_file_urls(False)
+        settings.set_enable_html5_local_storage(True)
 
         # Modern Chrome/Edge user agent with AVD4Linux client identifier
         ua = (
@@ -262,6 +265,14 @@ class AVDBrowserView(Gtk.Box):
                             text = decoded
                     except Exception:
                         pass
+
+                # Sanitize high-risk directives that could mount local drives or execute unauthorized binaries
+                FORBIDDEN_PREFIXES = ("drivestoredirect", "alternate shell", "initial program")
+                clean_lines = [
+                    line for line in text.splitlines()
+                    if not any(line.strip().lower().startswith(p) for p in FORBIDDEN_PREFIXES)
+                ]
+                text = "\r\n".join(clean_lines) + "\r\n"
 
                 rdp_out.write_text(text, encoding="utf-8")
                 os.chmod(rdp_out, stat.S_IRUSR | stat.S_IWUSR)

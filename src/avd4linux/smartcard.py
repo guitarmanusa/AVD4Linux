@@ -119,10 +119,17 @@ class SmartCardMonitor:
 
 def get_piv_certificate_uri() -> Optional[str]:
     """Finds the PKCS#11 URI for the PIV Authentication certificate."""
+    import shutil
     import subprocess
+
+    p11tool_path = shutil.which("p11tool")
+    if not p11tool_path or not p11tool_path.startswith(("/usr/bin", "/bin", "/usr/local/bin")):
+        logger.error("p11tool not found in secure system paths: %s", p11tool_path)
+        return None
+
     queries = [
-        ["p11tool", "--list-all-certs", "pkcs11:model=PKCS%2315%20emulated;type=cert"],
-        ["p11tool", "--list-all-certs", "pkcs11:type=cert"],
+        [p11tool_path, "--list-all-certs", "pkcs11:model=PKCS%2315%20emulated;type=cert"],
+        [p11tool_path, "--list-all-certs", "pkcs11:type=cert"],
     ]
     for cmd in queries:
         try:
@@ -157,6 +164,7 @@ def get_piv_private_key_uri(pin: Optional[str] = None) -> Optional[str]:
 
 def get_piv_tls_certificate(pin: Optional[str] = None):
     """Loads the PIV certificate with private key as a Gio.TlsCertificate."""
+    import re
     import gi
     from gi.repository import Gio
     cert_uri = get_piv_certificate_uri()
@@ -166,5 +174,7 @@ def get_piv_tls_certificate(pin: Optional[str] = None):
     try:
         return Gio.TlsCertificate.new_from_pkcs11_uris(cert_uri, key_uri)
     except Exception as e:
-        logger.error("Failed to load Gio.TlsCertificate from %s: %s", cert_uri, e)
+        safe_uri = re.sub(r"pin-value=[^&]+", "pin-value=***", key_uri or cert_uri)
+        clean_err = re.sub(r"pin-value=[^&\s'\"]+", "pin-value=***", str(e))
+        logger.error("Failed to load Gio.TlsCertificate from %s: %s", safe_uri, clean_err)
         return None
