@@ -245,6 +245,8 @@ class AVDMainWindow(Adw.ApplicationWindow):
             logger.info("Captured OAuth redirect code for FreeRDP: %s", uri[:80])
             self.session_manager.feed_auth_url(uri)
             self.show_toast("Opening remote desktop session...", timeout=4)
+            # Clear PIN from memory as it is no longer needed
+            self.browser.cached_pin = None
             GLib.idle_add(auth_win.close)
 
         def on_auth_policy(view, decision, decision_type):

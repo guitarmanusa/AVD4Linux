@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import tempfile
 from pathlib import Path
 from typing import Callable, Optional
@@ -43,7 +44,7 @@ class AVDBrowserView(Gtk.Box):
         settings.set_enable_developer_extras(True)
         settings.set_enable_smooth_scrolling(True)
         settings.set_enable_webgl(True)
-        settings.set_javascript_can_open_windows_automatically(True)
+        settings.set_javascript_can_open_windows_automatically(False)
 
         # Modern Chrome/Edge user agent with AVD4Linux client identifier
         ua = (
@@ -201,9 +202,17 @@ class AVDBrowserView(Gtk.Box):
     def _on_decide_destination(
         self, download: WebKit.Download, suggested_filename: str
     ) -> bool:
+        # Prevent Path Traversal
+        safe_filename = os.path.basename(suggested_filename)
+        if not safe_filename:
+            safe_filename = "session.rdp"
+
         tmp_dir = Path(tempfile.gettempdir()) / "avd4linux-downloads"
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        dest = str(tmp_dir / suggested_filename)
+        # Lock down directory permissions to current user only
+        os.chmod(tmp_dir, stat.S_IRWXU)
+
+        dest = str(tmp_dir / safe_filename)
         logger.info("Saving downloaded file to: %s", dest)
         # WebKit requires an absolute filesystem path, NOT a URI
         download.set_destination(dest)

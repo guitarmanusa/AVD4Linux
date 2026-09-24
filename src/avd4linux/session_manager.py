@@ -50,7 +50,6 @@ class RDPSessionManager:
             rdp_path,
             "/smartcard",
             "/smartcard-logon",
-            "/cert:ignore",
             "/network:auto",
             "+fonts",
             "/gfx",
@@ -103,7 +102,12 @@ class RDPSessionManager:
         """Launches FreeRDP 3 asynchronously using a pseudo-terminal."""
         import pty
         cmd = self.build_rdp_file_args(rdp_path, extra_args)
-        logger.info("Launching FreeRDP 3: %s", " ".join(cmd))
+        safe_cmd = [
+            arg if not arg.startswith(("/azure:ad:", "/access-token:", "/gateway:"))
+            else arg.split(":")[0] + ":***"
+            for arg in cmd
+        ]
+        logger.info("Launching FreeRDP 3: %s", " ".join(safe_cmd))
 
         env = dict(os.environ)
         if "DISPLAY" not in env:
@@ -145,7 +149,7 @@ class RDPSessionManager:
                 for line in text.splitlines():
                     line_clean = line.strip()
                     if line_clean:
-                        logger.info("[FreeRDP] %s", line_clean)
+                        logger.debug("[FreeRDP] %s", line_clean)
 
                 if "Browse to:" in buf and "Paste redirect URL here:" in buf:
                     match = re.search(r"Browse to:\s*(https://\S+)", buf)
