@@ -1,0 +1,4 @@
+__pycache__/
+*.o
+smartcard_channel_probe
+*.pyc

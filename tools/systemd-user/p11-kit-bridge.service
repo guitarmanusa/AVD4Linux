@@ -1,0 +1,22 @@
+# p11-kit RPC bridge for AVD Linux smart card redirection.
+# Pattern per Phase 2a engineering notes: server owned by the XDG runtime dir,
+# socket published at $XDG_RUNTIME_DIR/p11-kit/pkcs11. Flatpak/WebKit sandboxes
+# consume it through p11-kit-client.so + the p11-kit server RPC protocol.
+[Unit]
+Description=AVD Linux p11-kit server (smartcard RPC bridge)
+# Do not do speculative enumeration in the unit even if the client module is
+# present in the sandbox: p11-kit server only exports "pkcs11:" (the host
+# pcscd + PIV tokens), and the trust module stays on the host side.
+Documentation=file:///home/ladmin/dev/AVD_for_linux/docs/phase2-rpc.md
+
+[Service]
+Type=simple
+# -f: foreground; -n %t/p11-kit/pkcs11: server-driven exact socket path
+ExecStart=/usr/bin/p11-kit server -f -n %t/p11-kit/pkcs11 "pkcs11:"
+Restart=on-failure
+RestartSec=3
+# StandardOutput=append:/home/ladmin/dev/AVD_for_linux/var/log/p11kit-bridge.log
+# StandardOutput=append:/home/ladmin/dev/AVD_for_linux/var/log/p11kit-bridge.log
+
+[Install]
+WantedBy=default.target
