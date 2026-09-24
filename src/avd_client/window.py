@@ -329,6 +329,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
                                 else:
                                     logger.error("Could not load PIV certificate with provided PIN")
                                     request.cancel()
+                                    dlg.close()
                                     return
                             request.authenticate(cred)
                         else:
@@ -338,6 +339,8 @@ class AVDMainWindow(Adw.ApplicationWindow):
                 except Exception as e:
                     logger.error("Error in PIN response handler: %s", e)
                     request.cancel()
+                finally:
+                    dlg.close()
 
             dialog.connect("response", on_response)
             entry.connect("activate", lambda _: dialog.response("unlock"))

@@ -67,9 +67,11 @@ class RDPSessionManager:
                     break
 
             if tenant_id:
-                # Add sovereign DoD Azure AD parameters
+                # Use login.microsoftonline.com authority for client a85cf173-4192-42f8-81fa-777a763e6e2c
+                # because Microsoft whitelisted https://login.microsoftonline.com/common/oauth2/nativeclient
+                # with the sovereign AVD scope https://www.wvd.azure.us/.default
                 args.append(
-                    f"/azure:ad:login.microsoftonline.us,avd-scope:https://www.wvd.azure.us/.default,tenantid:{tenant_id}"
+                    f"/azure:ad:login.microsoftonline.com,avd-scope:https://www.wvd.azure.us/.default,tenantid:{tenant_id}"
                 )
         except Exception as e:
             logger.warning("Could not parse tenant from .rdp file: %s", e)
