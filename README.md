@@ -36,6 +36,15 @@ bin/avd-linux --cloud commercial
 bin/avd-linux --rdp ~/Downloads/my-desktop.rdp
 ```
 
+---
+
+## Standalone Flatpak & Flathub Packaging
+
+See [docs/packaging-and-flathub.md](docs/packaging-and-flathub.md) for full instructions on:
+- Building a standalone `.flatpak` bundle.
+- Submitting to Flathub.
+- Automated GitHub Actions build pipeline.
+
 ## Status
 
 | Phase | Scope | Status |

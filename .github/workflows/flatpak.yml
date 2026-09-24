@@ -1,0 +1,46 @@
+name: Build & Package Flatpak
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  flatpak:
+    name: "Flatpak Builder"
+    runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:gnome-47
+      options: --privileged
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate AppStream Metadata
+        run: |
+          appstreamcli validate data/org.avd.AvdLinux.metainfo.xml || true
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: org.avd.AvdLinux.flatpak
+          manifest-path: packaging/flatpak/org.avd.AvdLinux.yaml
+          run-tests: false
+          app-id: org.avd.AvdLinux
+
+      - name: Upload Standalone Flatpak Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: org.avd.AvdLinux.flatpak
+          path: org.avd.AvdLinux.flatpak
+
+      - name: Attach Bundle to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: org.avd.AvdLinux.flatpak
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
