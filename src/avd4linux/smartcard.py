@@ -1,8 +1,4 @@
-"""PC/SC Smart Card detector and monitor for AVD Linux client.
-
-Uses libpcsclite via ctypes to query card presence, reader status, and
-PIV token information in a thread-safe manner suitable for GLib/GTK.
-"""
+"""PC/SC Smart Card detector and monitor for AVD4Linux."""
 from __future__ import annotations
 
 import ctypes as C

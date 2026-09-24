@@ -1,6 +1,6 @@
-"""Azure Virtual Desktop Linux client - sovereign cloud configuration.
+"""Azure Virtual Desktop configuration for AVD4Linux.
 
-Encapsulates the endpoints and FreeRDP 3 flags required to reach AVD in
+Encapsulates the endpoints and FreeRDP 3 flags required to reach Azure Virtual Desktop in
 Azure Commercial, Azure US Government (GCC High) and Azure US DoD, including
 Smart Card redirection (MS-RDPESC) and Entra ID authentication.
 """
@@ -61,7 +61,7 @@ CLOUDS = {
     ),
 }
 
-CONFIG_DIR = Path.home() / ".config" / "avd-linux"
+CONFIG_DIR = Path.home() / ".config" / "avd4linux"
 KEYS: tuple[str, ...] = tuple(CLOUDS)
 
 

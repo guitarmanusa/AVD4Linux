@@ -1,8 +1,8 @@
-app-id: org.avd.AvdLinux
+app-id: org.avd4linux.AVD4Linux
 runtime: org.gnome.Platform
 runtime-version: '47'
 sdk: org.gnome.Sdk
-command: avd-linux
+command: avd4linux
 
 finish-args:
   # Display & Windowing
@@ -25,7 +25,7 @@ finish-args:
 
   # Downloads & Configuration
   - --filesystem=xdg-download
-  - --filesystem=~/.config/avd-linux:create
+  - --filesystem=~/.config/avd4linux:create
 
 modules:
   # 1. PC/SC Lite client library (to communicate with host pcscd socket)
@@ -72,14 +72,14 @@ modules:
         url: https://pub.freerdp.com/releases/freerdp-3.10.2.tar.gz
         sha256: 28bc45cf25178d8a7c29e1eb13e00cf0ca4ea63c784f938b813155f9e20a4b78
 
-  # 4. AVD Linux Native Client Application
-  - name: avd-linux
+  # 4. AVD4Linux Native Client Application
+  - name: avd4linux
     buildsystem: simple
     build-commands:
       - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} .
-      - install -Dm644 data/org.avd.AvdLinux.desktop ${FLATPAK_DEST}/share/applications/org.avd.AvdLinux.desktop
-      - install -Dm644 data/org.avd.AvdLinux.metainfo.xml ${FLATPAK_DEST}/share/metainfo/org.avd.AvdLinux.metainfo.xml
-      - install -Dm644 data/org.avd.AvdLinux.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.avd.AvdLinux.svg
+      - install -Dm644 data/org.avd4linux.AVD4Linux.desktop ${FLATPAK_DEST}/share/applications/org.avd4linux.AVD4Linux.desktop
+      - install -Dm644 data/org.avd4linux.AVD4Linux.metainfo.xml ${FLATPAK_DEST}/share/metainfo/org.avd4linux.AVD4Linux.metainfo.xml
+      - install -Dm644 data/org.avd4linux.AVD4Linux.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.avd4linux.AVD4Linux.svg
     sources:
       - type: dir
         path: ../..

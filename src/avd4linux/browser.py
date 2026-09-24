@@ -1,4 +1,4 @@
-"""Embedded WebKitGTK 6.0 view for AVD authentication and workspace access."""
+"""Embedded WebKitGTK 6.0 view for AVD4Linux authentication and workspace access."""
 from __future__ import annotations
 
 import logging
@@ -15,7 +15,7 @@ from gi.repository import GLib, Gtk, WebKit
 
 logger = logging.getLogger(__name__)
 
-USER_DATA_DIR = Path.home() / ".local" / "share" / "avd-linux"
+USER_DATA_DIR = Path.home() / ".local" / "share" / "avd4linux"
 WEB_DATA_DIR = USER_DATA_DIR / "webdata"
 
 
@@ -45,10 +45,10 @@ class AVDBrowserView(Gtk.Box):
         settings.set_enable_webgl(True)
         settings.set_javascript_can_open_windows_automatically(True)
 
-        # Modern Chrome/Edge user agent so Microsoft Entra and AVD accept modern capabilities
+        # Modern Chrome/Edge user agent with AVD4Linux client identifier
         ua = (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0"
+            "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0 AVD4Linux/0.9.0"
         )
         settings.set_user_agent(ua)
 
@@ -201,7 +201,7 @@ class AVDBrowserView(Gtk.Box):
     def _on_decide_destination(
         self, download: WebKit.Download, suggested_filename: str
     ) -> bool:
-        tmp_dir = Path(tempfile.gettempdir()) / "avd-linux-downloads"
+        tmp_dir = Path(tempfile.gettempdir()) / "avd4linux-downloads"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         dest = str(tmp_dir / suggested_filename)
         logger.info("Saving downloaded file to: %s", dest)

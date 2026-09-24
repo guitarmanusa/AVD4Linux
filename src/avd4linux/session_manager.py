@@ -1,4 +1,4 @@
-"""FreeRDP 3 session launcher and lifecycle manager for AVD."""
+"""FreeRDP 3 session launcher and lifecycle manager for AVD4Linux."""
 from __future__ import annotations
 
 import logging

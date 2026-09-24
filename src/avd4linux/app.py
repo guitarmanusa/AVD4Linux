@@ -1,4 +1,4 @@
-"""Adw.Application implementation for Azure Virtual Desktop Linux."""
+"""Adw.Application implementation for AVD4Linux."""
 from __future__ import annotations
 
 import argparse
@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class AVDApplication(Adw.Application):
-    """The top-level AVD Linux client application."""
+    """The top-level AVD4Linux desktop application."""
 
     def __init__(self, initial_cloud: str = "dod") -> None:
         super().__init__(
-            application_id="org.avd.linux",
+            application_id="org.avd4linux.AVD4Linux",
             flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
         )
         self.initial_cloud = initial_cloud
@@ -34,7 +34,7 @@ class AVDApplication(Adw.Application):
 
     def do_command_line(self, command_line: Gio.ApplicationCommandLine) -> int:
         args = command_line.get_arguments()
-        parser = argparse.ArgumentParser(description="Azure Virtual Desktop Linux Client")
+        parser = argparse.ArgumentParser(description="AVD4Linux — Azure Virtual Desktop Linux Client")
         parser.add_argument(
             "--cloud",
             choices=["dod", "gcc", "commercial"],

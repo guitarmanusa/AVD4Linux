@@ -1,4 +1,4 @@
-"""Main Application Window for AVD Linux Client."""
+"""Main Application Window for AVD4Linux."""
 from __future__ import annotations
 
 import logging
@@ -24,7 +24,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
     """Main window with embedded AVD web client and FreeRDP session launcher."""
 
     def __init__(self, app: Adw.Application, initial_cloud_id: str = "dod") -> None:
-        super().__init__(application=app, title="Azure Virtual Desktop")
+        super().__init__(application=app, title="AVD4Linux")
         self.set_default_size(1280, 850)
 
         self.smartcard_monitor = SmartCardMonitor()
