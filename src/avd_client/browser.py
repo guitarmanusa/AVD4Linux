@@ -173,7 +173,7 @@ class AVDBrowserView(Gtk.Box):
             mime = (response.get_mime_type() or "").lower()
             suggested = (response.get_suggested_filename() or "").lower()
             uri = (response.get_uri() or "").lower()
-            if "rdp" in mime or suggested.endswith(".rdp") or "rdp" in uri:
+            if "rdp" in mime or suggested.endswith((".rdp", ".rdpw")) or "rdp" in uri:
                 logger.info(
                     "Intercepting RDP response for FreeRDP launch: mime=%s, file=%s",
                     mime,
@@ -184,7 +184,7 @@ class AVDBrowserView(Gtk.Box):
         elif decision_type == WebKit.PolicyDecisionType.NAVIGATION_ACTION:
             action = decision.get_navigation_action()
             uri = (action.get_request().get_uri() or "").lower()
-            if uri.startswith("ms-rd:") or uri.endswith(".rdp"):
+            if uri.startswith("ms-rd:") or uri.endswith((".rdp", ".rdpw")):
                 logger.info("Intercepting RDP navigation: %s", uri)
                 decision.download()
                 return True
@@ -205,16 +205,64 @@ class AVDBrowserView(Gtk.Box):
         tmp_dir.mkdir(parents=True, exist_ok=True)
         dest = str(tmp_dir / suggested_filename)
         logger.info("Saving downloaded file to: %s", dest)
-        download.set_destination(f"file://{dest}")
+        # WebKit requires an absolute filesystem path, NOT a URI
+        download.set_destination(dest)
         download.set_allow_overwrite(True)
         return True
 
     def _on_download_finished(self, download: WebKit.Download) -> None:
-        dest_uri = download.get_destination()
-        if not dest_uri:
+        dest_path = download.get_destination()
+        if not dest_path:
             return
-        dest_path = dest_uri.replace("file://", "")
+        dest_path = dest_path.replace("file://", "")
         logger.info("Download completed: %s", dest_path)
-        if dest_path.endswith(".rdp") and self.on_rdp_file_ready:
+        if dest_path.endswith((".rdp", ".rdpw")) and self.on_rdp_file_ready:
+            ready_file = self._prepare_rdp_file(dest_path)
             # Deliver to RDP launcher
-            GLib.idle_add(self.on_rdp_file_ready, dest_path)
+            GLib.idle_add(self.on_rdp_file_ready, ready_file)
+
+    def _prepare_rdp_file(self, dest_path: str) -> str:
+        """Ensures the downloaded file is a valid .rdp file for FreeRDP."""
+        p = Path(dest_path)
+        if not p.exists():
+            return dest_path
+        
+        rdp_out = p.with_suffix(".rdp")
+        try:
+            raw = p.read_bytes()
+            text = None
+            for enc in ["utf-8", "utf-16", "latin1"]:
+                try:
+                    text = raw.decode(enc)
+                    break
+                except Exception:
+                    continue
+
+            if text:
+                import json
+                if text.strip().startswith("{") and "}" in text:
+                    try:
+                        data = json.loads(text)
+                        for key in ["rdp", "connectionString", "rdpFile", "content"]:
+                            if key in data and isinstance(data[key], str):
+                                text = data[key]
+                                break
+                    except Exception:
+                        pass
+
+                import base64
+                if not any(k in text for k in ["full address", "gatewayhostname", "loadbalanceinfo"]):
+                    try:
+                        decoded = base64.b64decode(text.strip()).decode("utf-8", errors="replace")
+                        if any(k in decoded for k in ["full address", "gateway", "loadbalanceinfo"]):
+                            text = decoded
+                    except Exception:
+                        pass
+
+                rdp_out.write_text(text, encoding="utf-8")
+                logger.info("Prepared RDP file for FreeRDP: %s", rdp_out)
+                return str(rdp_out)
+        except Exception as e:
+            logger.error("Failed to process downloaded RDP file %s: %s", dest_path, e)
+
+        return dest_path

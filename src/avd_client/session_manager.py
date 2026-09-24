@@ -45,6 +45,7 @@ class RDPSessionManager:
         rdp_path = str(Path(rdp_path).expanduser().resolve())
         args = [
             self.executable,
+            rdp_path,
             "/smartcard",
             "/smartcard-logon",
             "/sec:aad",
@@ -54,7 +55,6 @@ class RDPSessionManager:
             "/gfx",
             "/rfx",
             "/dynamic-resolution",
-            rdp_path,
         ]
 
         if extra_args:
