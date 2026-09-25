@@ -42,6 +42,11 @@ ALLOWED_NAVIGATION_DOMAINS = (
     "windowsazure.com",
 )
 
+ALLOWED_MTLS_DOMAINS = (
+    "certauth.login.microsoftonline.us",
+    "certauth.login.microsoftonline.com",
+)
+
 FORBIDDEN_RDP_DIRECTIVES = {
     "drivestoredirect",
     "redirectdrives",
@@ -79,10 +84,10 @@ def is_safe_rdp_directive(line: str) -> bool:
 
 
 def prepare_rdp_file(dest_path: str | Path) -> str:
-    """Ensures the downloaded file is a valid, sanitized .rdp file for FreeRDP."""
+    """Ensures the downloaded file is a valid, sanitized .rdp file for FreeRDP (Fail-Closed)."""
     p = Path(dest_path).expanduser().resolve()
-    if not p.exists():
-        return str(dest_path)
+    if not p.is_file():
+        raise FileNotFoundError(f"RDP file not found: {dest_path}")
 
     rdp_out = p.with_suffix(".rdp")
     try:
@@ -95,42 +100,67 @@ def prepare_rdp_file(dest_path: str | Path) -> str:
             except Exception:
                 continue
 
-        if text:
-            import json
-            if text.strip().startswith("{") and "}" in text:
-                try:
-                    data = json.loads(text)
-                    for key in ["rdp", "connectionString", "rdpFile", "content"]:
-                        if key in data and isinstance(data[key], str):
-                            text = data[key]
-                            break
-                except Exception:
-                    pass
+        if not text:
+            raise ValueError(f"Could not decode text encoding for RDP file: {dest_path}")
 
-            import base64
-            if not any(k in text for k in ["full address", "gatewayhostname", "loadbalanceinfo"]):
-                try:
-                    decoded = base64.b64decode(text.strip()).decode("utf-8", errors="replace")
-                    if any(k in decoded for k in ["full address", "gateway", "loadbalanceinfo"]):
-                        text = decoded
-                except Exception:
-                    pass
+        import json
+        if text.strip().startswith("{") and "}" in text:
+            try:
+                data = json.loads(text)
+                for key in ["rdp", "connectionString", "rdpFile", "content"]:
+                    if key in data and isinstance(data[key], str):
+                        text = data[key]
+                        break
+            except Exception:
+                pass
 
-            # Structured key-value directive sanitization
-            clean_lines = [
-                line for line in text.splitlines()
-                if is_safe_rdp_directive(line)
-            ]
-            text = "\r\n".join(clean_lines) + "\r\n"
+        import base64
+        if not any(k in text.lower() for k in ["full address", "gatewayhostname", "loadbalanceinfo"]):
+            try:
+                decoded = base64.b64decode(text.strip()).decode("utf-8", errors="replace")
+                if any(k in decoded.lower() for k in ["full address", "gateway", "loadbalanceinfo"]):
+                    text = decoded
+            except Exception:
+                pass
 
-            rdp_out.write_text(text, encoding="utf-8")
-            os.chmod(rdp_out, stat.S_IRUSR | stat.S_IWUSR)
-            logger.info("Prepared sanitized RDP file for FreeRDP: %s", rdp_out)
-            return str(rdp_out)
+        # Handle XML-wrapped RDP content (e.g. <RDP>...</RDP>) and decode XML/HTML entities
+        import html
+        import xml.etree.ElementTree as ET
+        if text.strip().startswith("<"):
+            try:
+                root = ET.fromstring(text)
+                # Extract all text content from XML nodes
+                extracted = "".join(root.itertext())
+                if extracted.strip():
+                    text = extracted
+            except Exception:
+                # If XML parsing fails, unescape entities directly
+                pass
+
+        # Unescape XML/HTML entities (e.g. &#x0a;, &#10;) so encoded newlines expand before line splitting
+        text = html.unescape(text)
+
+        # Structured key-value directive sanitization
+        clean_lines = [
+            line for line in text.splitlines()
+            if is_safe_rdp_directive(line)
+        ]
+
+        # Fail-closed: ensure file contains valid RDP directives
+        valid_directives = [l for l in clean_lines if ":" in l and not l.strip().startswith(("#", ";"))]
+        if not valid_directives:
+            raise ValueError(f"RDP file {dest_path} contains no valid configuration directives")
+
+        text = "\r\n".join(clean_lines) + "\r\n"
+
+        rdp_out.write_text(text, encoding="utf-8")
+        os.chmod(rdp_out, stat.S_IRUSR | stat.S_IWUSR)
+        logger.info("Prepared sanitized RDP file for FreeRDP: %s", rdp_out)
+        return str(rdp_out)
     except Exception as e:
-        logger.error("Failed to process RDP file %s: %s", dest_path, e)
-
-    return str(dest_path)
+        logger.error("Security/Sanitization Error: Failed to process RDP file %s: %s", dest_path, e)
+        # Fail closed: never return the raw or unsanitized file path
+        raise ValueError(f"Failed to safely sanitize RDP file {dest_path}: {e}") from e
 
 
 class AVDBrowserView(Gtk.Box):
@@ -243,6 +273,13 @@ class AVDBrowserView(Gtk.Box):
         host = request.get_host()
         logger.info("Authentication requested: scheme=%s, host=%s", scheme, host)
 
+        req_host = (host or "").lower()
+        is_trusted_mtls = any(req_host == d or req_host.endswith("." + d) for d in ALLOWED_MTLS_DOMAINS)
+        if not is_trusted_mtls:
+            logger.warning("Security violation: Rejected client certificate/PIN request from untrusted host: %s", host)
+            request.cancel()
+            return True
+
         if scheme == WebKit.AuthenticationScheme.CLIENT_CERTIFICATE_REQUESTED:
             from .smartcard import get_piv_tls_certificate
             cert = get_piv_tls_certificate()
@@ -301,6 +338,12 @@ class AVDBrowserView(Gtk.Box):
                     logger.warning("Blocked navigation to unapproved domain: %s", hostname)
                     decision.ignore()
                     return True
+            elif parsed.scheme == "about" and parsed.path == "blank":
+                return False
+            else:
+                logger.warning("Security violation: Blocked navigation to unauthorized scheme: %s (uri: %s)", parsed.scheme, uri[:60])
+                decision.ignore()
+                return True
         return False
 
     def _on_download_started(
