@@ -212,10 +212,10 @@ class AVDMainWindow(Adw.ApplicationWindow):
 
     def _on_cert_trust_needed(self, cert_info: dict[str, str], response_cb: Callable[[str], None]) -> None:
         """Presents an interactive modal dialog showing certificate details before accepting."""
-        host = cert_info.get("host", "Remote Gateway")
-        fingerprint = cert_info.get("fingerprint", "Unknown")
-        subject = cert_info.get("subject", "")
-        issuer = cert_info.get("issuer", "")
+        host = GLib.markup_escape_text(cert_info.get("host", "Remote Gateway"))
+        fingerprint = GLib.markup_escape_text(cert_info.get("fingerprint", "Unknown"))
+        subject = GLib.markup_escape_text(cert_info.get("subject", ""))
+        issuer = GLib.markup_escape_text(cert_info.get("issuer", ""))
 
         body_lines = [
             f"FreeRDP received an untrusted server certificate for:\n<b>{host}</b>\n",
@@ -321,14 +321,15 @@ class AVDMainWindow(Adw.ApplicationWindow):
                 parsed = urllib.parse.urlparse(uri)
                 if parsed.scheme in ("http", "https"):
                     hostname = (parsed.hostname or "").lower()
-                    allowed_auth_hosts = {
+                    allowed_auth_domains = (
                         "login.microsoftonline.com",
                         "login.microsoftonline.us",
                         "certauth.login.microsoftonline.com",
                         "certauth.login.microsoftonline.us",
-                        parsed.hostname.lower() if parsed.hostname else "",
-                    }
-                    if not any(hostname == d or hostname.endswith("." + d) for d in allowed_auth_hosts):
+                        "msauth.net",
+                        "msftauth.net",
+                    )
+                    if not any(hostname == d or hostname.endswith("." + d) for d in allowed_auth_domains):
                         logger.warning("Security violation in auth window: Blocked navigation to unapproved domain: %s", hostname)
                         decision.ignore()
                         return True

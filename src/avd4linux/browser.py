@@ -47,54 +47,61 @@ ALLOWED_MTLS_DOMAINS = (
     "certauth.login.microsoftonline.com",
 )
 
-FORBIDDEN_RDP_DIRECTIVES = {
+FORBIDDEN_RDP_DIRECTIVES_NORMALIZED = {
     "drivestoredirect",
     "redirectdrives",
     "usbdevicestoredirect",
     "devicestoredirect",
-    "alternate shell",
-    "initial program",
+    "alternateshell",
+    "initialprogram",
     "remoteapplicationcmdline",
     "remoteapplicationfile",
-    "drives to redirect",
     "drives",
     "gatewayusageargument",
     "redirectclipboard",
     "redirectcomports",
     "redirectprinters",
     "redirectposdevices",
-    "shell working directory",
+    "shellworkingdirectory",
     "exec",
+    "disablerail",
 }
 
 
 def is_safe_rdp_directive(line: str) -> bool:
-    """Validates an individual RDP directive line against security rules."""
+    """Validates an individual RDP directive line against security rules using normalized key matching."""
     import re
     line_clean = line.strip()
     if not line_clean or line_clean.startswith(("#", ";")):
         return True
+
     parts = line_clean.split(":", 2)
-    key = parts[0].strip().lower()
-    if key in FORBIDDEN_RDP_DIRECTIVES:
-        logger.warning("Stripping forbidden RDP directive: %s", key)
+    raw_key = parts[0].strip().lower()
+    key_norm = re.sub(r"[^a-z0-9]", "", raw_key)
+
+    if key_norm in FORBIDDEN_RDP_DIRECTIVES_NORMALIZED:
+        logger.warning("Stripping forbidden RDP directive: %s", raw_key)
         return False
-    if key == "remoteapplicationprogram" and len(parts) == 3:
-        val = parts[2].strip()
-        # Allow standard AVD alias format (e.g. ||guid or ||alias), reject arbitrary commands/paths
-        if val and not re.fullmatch(r"\|\|[0-9a-zA-Z\-_]+", val):
-            logger.warning("Stripping non-standard remoteapplicationprogram: %s", val)
+
+    if key_norm == "remoteapplicationprogram":
+        val = parts[-1].strip() if len(parts) > 1 else ""
+        if not val or not re.fullmatch(r"\|\|[0-9a-zA-Z\-_]+", val):
+            logger.warning("Stripping unsafe remoteapplicationprogram: %s", val)
             return False
+
     return True
 
 
 def prepare_rdp_file(dest_path: str | Path) -> str:
-    """Ensures the downloaded file is a valid, sanitized .rdp file for FreeRDP (Fail-Closed)."""
+    """Ensures the downloaded file is a valid, sanitized .rdp file for FreeRDP (Fail-Closed, Atomic)."""
     p = Path(dest_path).expanduser().resolve()
     if not p.is_file():
         raise FileNotFoundError(f"RDP file not found: {dest_path}")
 
     rdp_out = p.with_suffix(".rdp")
+    if rdp_out.is_symlink():
+        rdp_out.unlink()
+
     try:
         raw = p.read_bytes()
         text = None
@@ -158,8 +165,20 @@ def prepare_rdp_file(dest_path: str | Path) -> str:
 
         text = "\r\n".join(clean_lines) + "\r\n"
 
-        rdp_out.write_text(text, encoding="utf-8")
-        os.chmod(rdp_out, stat.S_IRUSR | stat.S_IWUSR)
+        # Atomic write via temporary file in DOWNLOADS_DIR to prevent race conditions / symlink replacement
+        fd, tmp_swap = tempfile.mkstemp(dir=str(DOWNLOADS_DIR), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f_tmp:
+                f_tmp.write(text)
+            os.chmod(tmp_swap, stat.S_IRUSR | stat.S_IWUSR)
+            os.replace(tmp_swap, rdp_out)
+        finally:
+            if os.path.exists(tmp_swap):
+                try:
+                    os.unlink(tmp_swap)
+                except Exception:
+                    pass
+
         logger.info("Prepared sanitized RDP file for FreeRDP: %s", rdp_out)
         return str(rdp_out)
     except Exception as e:
@@ -330,10 +349,6 @@ class AVDBrowserView(Gtk.Box):
         elif decision_type == WebKit.PolicyDecisionType.NAVIGATION_ACTION:
             action = decision.get_navigation_action()
             uri = (action.get_request().get_uri() or "").lower()
-            if uri.startswith("ms-rd:") or uri.endswith((".rdp", ".rdpw")):
-                logger.info("Intercepting RDP navigation: %s", uri)
-                decision.download()
-                return True
 
             import urllib.parse
             parsed = urllib.parse.urlparse(uri)
@@ -349,15 +364,29 @@ class AVDBrowserView(Gtk.Box):
                 if inner_parsed.scheme in ("http", "https"):
                     hostname = (inner_parsed.hostname or "").lower()
                     if any(hostname == d or hostname.endswith("." + d) for d in ALLOWED_NAVIGATION_DOMAINS):
-                        return False  # Allow trusted blob origins
-                logger.warning("Blocked navigation to unauthorized blob origin: %s", parsed.path[:60])
-                decision.ignore()
-                return True
+                        pass  # Allow trusted blob origins
+                    else:
+                        logger.warning("Blocked navigation to unauthorized blob origin: %s", parsed.path[:60])
+                        decision.ignore()
+                        return True
+                else:
+                    decision.ignore()
+                    return True
             elif parsed.scheme == "about" and parsed.path == "blank":
-                return False
+                pass
+            elif uri.startswith("ms-rd:") or uri.endswith((".rdp", ".rdpw")):
+                logger.info("Intercepting RDP navigation: %s", uri)
+                decision.download()
+                return True
             else:
                 logger.warning("Security violation: Blocked navigation to unauthorized scheme: %s (uri: %s)", parsed.scheme, uri[:60])
                 decision.ignore()
+                return True
+
+            # If it passed http/https/blob domain checks, check if it's an RDP download navigation
+            if uri.startswith("ms-rd:") or uri.endswith((".rdp", ".rdpw")):
+                logger.info("Intercepting RDP navigation: %s", uri)
+                decision.download()
                 return True
         return False
 
@@ -383,10 +412,16 @@ class AVDBrowserView(Gtk.Box):
 
         # Non-destructive collision handling: do not overwrite existing files
         dest_file = DOWNLOADS_DIR / safe_filename
+        if dest_file.is_symlink():
+            dest_file.unlink()
+
         stem = dest_file.stem
         suffix = dest_file.suffix
         counter = 1
-        while dest_file.exists():
+        while dest_file.exists() or dest_file.is_symlink():
+            if dest_file.is_symlink():
+                dest_file.unlink()
+                break
             dest_file = DOWNLOADS_DIR / f"{stem}_{counter}{suffix}"
             counter += 1
 
@@ -401,7 +436,10 @@ class AVDBrowserView(Gtk.Box):
         dest_path = download.get_destination()
         if not dest_path:
             return
-        dest_path = dest_path.replace("file://", "")
+        if dest_path.startswith("file://"):
+            dest_path = dest_path[7:]
+        import urllib.parse
+        dest_path = urllib.parse.unquote(dest_path)
         logger.info("Download completed: %s", dest_path)
         if dest_path.endswith((".rdp", ".rdpw")) and self.on_rdp_file_ready:
             ready_file = prepare_rdp_file(dest_path)
