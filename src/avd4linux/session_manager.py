@@ -96,7 +96,8 @@ class RDPSessionManager:
                 if line.startswith("aadtenantid:s:"):
                     tenant_id = line.split(":", 2)[2].strip()
                 elif line.startswith(("gatewayhostname:s:", "full address:s:")):
-                    gateway_host = line.split(":", 2)[2].strip().lower()
+                    raw_gw = line.split(":", 2)[2].strip().lower()
+                    gateway_host = raw_gw.split(":", 1)[0]
 
             import re
             if tenant_id and re.fullmatch(r"^[0-9a-fA-F\-]{36}$", tenant_id):
