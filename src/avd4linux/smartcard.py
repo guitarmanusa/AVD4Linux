@@ -40,18 +40,19 @@ class SmartCardMonitor:
             return
         try:
             self._lib = C.CDLL(lib_name)
+            # Use c_ulong / c_size_t for 64-bit LP64 SCARDCONTEXT and SCARDHANDLE pointers
             self._lib.SCardEstablishContext.argtypes = [
-                C.c_uint32, C.c_void_p, C.c_void_p, C.POINTER(C.c_uint32)
+                C.c_ulong, C.c_void_p, C.c_void_p, C.POINTER(C.c_ulong)
             ]
             self._lib.SCardListReaders.argtypes = [
-                C.c_uint32, C.c_void_p, C.c_void_p, C.POINTER(C.c_uint32)
+                C.c_ulong, C.c_void_p, C.c_void_p, C.POINTER(C.c_ulong)
             ]
             self._lib.SCardConnect.argtypes = [
-                C.c_uint32, C.c_char_p, C.c_uint32, C.c_uint32,
-                C.POINTER(C.c_uint32), C.POINTER(C.c_uint32)
+                C.c_ulong, C.c_char_p, C.c_ulong, C.c_ulong,
+                C.POINTER(C.c_ulong), C.POINTER(C.c_ulong)
             ]
-            self._lib.SCardDisconnect.argtypes = [C.c_uint32, C.c_uint32]
-            self._lib.SCardReleaseContext.argtypes = [C.c_uint32]
+            self._lib.SCardDisconnect.argtypes = [C.c_ulong, C.c_ulong]
+            self._lib.SCardReleaseContext.argtypes = [C.c_ulong]
         except Exception as e:
             logger.error("Failed to load libpcsclite bindings: %s", e)
             self._lib = None
@@ -61,14 +62,14 @@ class SmartCardMonitor:
         if not self._lib:
             return SmartCardStatus(status_text="PC/SC library not available")
 
-        ctx = C.c_uint32(0)
+        ctx = C.c_ulong(0)
         rv = self._lib.SCardEstablishContext(SCARD_SCOPE_SYSTEM, 0, 0, C.byref(ctx))
         if rv != 0:
             return SmartCardStatus(status_text="PC/SC daemon (pcscd) inactive")
 
         try:
             buf = C.create_string_buffer(4096)
-            sz = C.c_uint32(4096)
+            sz = C.c_ulong(4096)
             rv = self._lib.SCardListReaders(ctx, None, buf, C.byref(sz))
             if rv != 0:
                 return SmartCardStatus(status_text="No Smart Card readers found")
@@ -83,8 +84,8 @@ class SmartCardMonitor:
 
             reader = readers[0]
             # Try to connect to card
-            h_card = C.c_uint32(0)
-            proto = C.c_uint32(0)
+            h_card = C.c_ulong(0)
+            proto = C.c_ulong(0)
             rv = self._lib.SCardConnect(
                 ctx,
                 reader.encode("utf-8"),

@@ -58,6 +58,7 @@ class RDPSessionManager:
         self._on_exit_callback: Optional[Callable[[int], None]] = None
         self.on_auth_url_needed: Optional[Callable[[str], None]] = None
         self.on_cert_trust_needed: Optional[Callable[[dict[str, str], Callable[[str], None]], None]] = None
+        self._cert_prompt_pending: bool = False
 
     def build_rdp_file_args(self, rdp_path: str | Path, extra_args: Optional[List[str]] = None) -> List[str]:
         """Builds command line arguments to launch an .rdp file with smart card redirection."""
@@ -80,24 +81,27 @@ class RDPSessionManager:
             "/rfx",
         ]
 
-        # Extract sovereign tenant if present
+        # Extract sovereign tenant and gateway host if present
         try:
             content = Path(rdp_path).read_text(encoding="utf-8", errors="replace")
             tenant_id = None
+            gateway_host = ""
             for line in content.splitlines():
                 if line.startswith("aadtenantid:s:"):
                     tenant_id = line.split(":", 2)[2].strip()
-                    break
+                elif line.startswith(("gatewayhostname:s:", "full address:s:")):
+                    gateway_host = line.split(":", 2)[2].strip().lower()
 
             import re
             if tenant_id and re.fullmatch(r"^[0-9a-fA-F\-]{36}$", tenant_id):
-                # Use sovereign DoD login.microsoftonline.us authority with use-tenantid:on
-                # and specify avd-access redirect URI to https://login.microsoftonline.com/common/oauth2/nativeclient
-                # which is the exact registered redirect URI for client a85cf173-4192-42f8-81fa-777a763e6e2c.
-                # Note: Pass as literal URL without % escapes because FreeRDP treats avd-access as a C printf format string.
+                # Dynamically determine cloud authority and scope based on gateway endpoint
+                is_usgov = (".azure.us" in gateway_host) or (".us" in gateway_host) or ("usgov" in gateway_host)
+                authority = "login.microsoftonline.us" if is_usgov else "login.microsoftonline.com"
+                scope = "https://www.wvd.azure.us/.default" if is_usgov else "https://wvd.microsoft.com/.default"
+
                 args.append(
-                    f"/azure:ad:login.microsoftonline.us,use-tenantid:on,tenantid:{tenant_id},"
-                    f"avd-scope:https://www.wvd.azure.us/.default,"
+                    f"/azure:ad:{authority},use-tenantid:on,tenantid:{tenant_id},"
+                    f"avd-scope:{scope},"
                     f"avd-access:https://login.microsoftonline.com/common/oauth2/nativeclient"
                 )
             elif tenant_id:
@@ -198,7 +202,8 @@ class RDPSessionManager:
                         else:
                             logger.debug("[FreeRDP] %s", line_clean)
 
-                if any(prompt in buf for prompt in ["(Y/T/N)", "(y/t/n)", "Do you trust the above certificate"]):
+                if any(prompt in buf for prompt in ["(Y/T/N)", "(y/t/n)", "Do you trust the above certificate"]) and not self._cert_prompt_pending:
+                    self._cert_prompt_pending = True
                     cert_info = parse_cert_trust_prompt(buf)
                     logger.warning(
                         "FreeRDP received untrusted TLS certificate challenge for host: %s (fingerprint: %s)",
@@ -212,12 +217,15 @@ class RDPSessionManager:
                             os.write(master_fd, val.encode())
                         except Exception as e:
                             logger.error("Failed to write certificate trust response to PTY: %s", e)
+                        finally:
+                            self._cert_prompt_pending = False
 
                     if self.on_cert_trust_needed:
                         self.on_cert_trust_needed(cert_info, respond_cert)
                     else:
                         logger.error("No certificate trust handler configured; rejecting untrusted certificate by default")
                         respond_cert("N")
+                        self._cert_prompt_pending = False
                         self.terminate_session()
                     buf = ""
 
