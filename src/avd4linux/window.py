@@ -104,6 +104,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
         self.browser = AVDBrowserView(
             on_rdp_file_ready=self._on_rdp_downloaded,
             on_title_changed=self._on_title_changed,
+            on_pin_requested=self._on_pin_requested,
         )
         self.toast_overlay.set_child(self.browser)
 
@@ -278,3 +279,66 @@ class AVDMainWindow(Adw.ApplicationWindow):
             self.show_toast("FreeRDP session completed normally.")
         else:
             self.show_toast(f"FreeRDP session ended (exit code: {exit_code}).")
+
+    def _on_pin_requested(self, request) -> bool:
+        """Prompts for the CAC PIN and submits it directly to WebKit with zero caching."""
+        try:
+            status = self.smartcard_monitor.check_status()
+            card_desc = status.card_name
+            if status.has_card:
+                card_desc = f"{status.card_name} ({status.reader_name})"
+
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                heading="Smart Card PIN Required",
+                body=f"Enter your PIN to authenticate with your CAC ({card_desc}) for Azure Virtual Desktop.",
+            )
+
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            box.set_margin_top(12)
+            box.set_margin_bottom(12)
+
+            entry = Gtk.PasswordEntry()
+            entry.set_show_peek_icon(True)
+            box.append(entry)
+
+            dialog.set_extra_child(box)
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("unlock", "Unlock Card")
+            dialog.set_response_appearance("unlock", Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response("unlock")
+            dialog.set_close_response("cancel")
+
+            def on_response(dlg, response):
+                try:
+                    import gi
+                    gi.require_version("WebKit", "6.0")
+                    from gi.repository import WebKit
+                    if response == "unlock":
+                        pin = entry.get_text()
+                        if pin:
+                            logger.info("Submitting CAC PIN directly to WebKit (FOR_SESSION)")
+                            cred = WebKit.Credential.new_for_certificate_pin(
+                                pin, WebKit.CredentialPersistence.FOR_SESSION
+                            )
+                            del pin
+                            request.authenticate(cred)
+                        else:
+                            request.cancel()
+                    else:
+                        request.cancel()
+                except Exception as e:
+                    logger.error("Error submitting PIN credential: %s", e)
+                    request.cancel()
+                finally:
+                    entry.set_text("")
+                    dlg.close()
+
+            dialog.connect("response", on_response)
+            entry.connect("activate", lambda _: dialog.response("unlock"))
+            dialog.present()
+            entry.grab_focus()
+            return True
+        except Exception as e:
+            logger.error("Error presenting PIN dialog: %s", e)
+            return False

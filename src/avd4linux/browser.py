@@ -36,11 +36,13 @@ class AVDBrowserView(Gtk.Box):
         on_rdp_file_ready: Optional[Callable[[str], None]] = None,
         on_title_changed: Optional[Callable[[str], None]] = None,
         on_load_changed: Optional[Callable[[float, bool], None]] = None,
+        on_pin_requested: Optional[Callable[[WebKit.AuthenticationRequest], bool]] = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.on_rdp_file_ready = on_rdp_file_ready
         self.on_title_changed = on_title_changed
         self.on_load_changed = on_load_changed
+        self.on_pin_requested = on_pin_requested
 
         # Secure application storage directories with user-only permissions
         for d in [USER_DATA_DIR, WEB_DATA_DIR, DOWNLOADS_DIR]:
@@ -150,9 +152,12 @@ class AVDBrowserView(Gtk.Box):
                 logger.warning("No PIV certificate available on hardware token for %s", host)
                 return False
 
-        # For CLIENT_CERTIFICATE_PIN_REQUESTED and other schemes, return False
-        # so WebKitGTK and the OS native authentication dialog prompt the user directly.
-        # This guarantees zero PIN handling or memory storage in Python.
+        elif scheme == WebKit.AuthenticationScheme.CLIENT_CERTIFICATE_PIN_REQUESTED:
+            logger.info("Smart card PIN requested for host: %s", host)
+            if self.on_pin_requested:
+                return self.on_pin_requested(request)
+            return False
+
         return False
 
     def _on_decide_policy(
