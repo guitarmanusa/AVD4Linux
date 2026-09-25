@@ -197,18 +197,83 @@ class AVDMainWindow(Adw.ApplicationWindow):
             logger.debug("File dialog canceled or error: %s", e)
 
     def _launch_freerdp(self, rdp_path: str) -> None:
-        """Launches FreeRDP 3 with smart card redirection."""
+        """Launches FreeRDP 3 with smart card redirection after sanitizing directives."""
+        from .browser import prepare_rdp_file
         try:
+            sanitized_path = prepare_rdp_file(rdp_path)
             self.session_manager.launch_rdp_file(
-                rdp_path,
+                sanitized_path,
                 on_exit=lambda rc: GLib.idle_add(self._on_session_exit, rc),
                 on_auth_url_needed=lambda url: GLib.idle_add(self._on_auth_url_needed, url),
+                on_cert_trust_needed=lambda info, cb: GLib.idle_add(self._on_cert_trust_needed, info, cb),
             )
         except Exception as e:
             self.show_toast(f"Failed to launch FreeRDP: {e}", timeout=6)
 
+    def _on_cert_trust_needed(self, cert_info: dict[str, str], response_cb: Callable[[str], None]) -> None:
+        """Presents an interactive modal dialog showing certificate details before accepting."""
+        host = cert_info.get("host", "Remote Gateway")
+        fingerprint = cert_info.get("fingerprint", "Unknown")
+        subject = cert_info.get("subject", "")
+        issuer = cert_info.get("issuer", "")
+
+        body_lines = [
+            f"FreeRDP received an untrusted server certificate for:\n<b>{host}</b>\n",
+        ]
+        if subject:
+            body_lines.append(f"<b>Subject:</b> {subject}")
+        if issuer:
+            body_lines.append(f"<b>Issuer:</b> {issuer}")
+        if fingerprint:
+            body_lines.append(f"<b>SHA-256 Fingerprint:</b>\n<tt>{fingerprint}</tt>\n")
+        body_lines.append("Do you trust this certificate to establish the remote desktop session?")
+
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Untrusted Server Certificate",
+            body="\n".join(body_lines),
+        )
+        dialog.set_body_use_markup(True)
+        dialog.add_response("reject", "Reject & Disconnect")
+        dialog.add_response("trust_once", "Trust Once")
+        dialog.add_response("trust_always", "Trust Always")
+        dialog.set_response_appearance("reject", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_response_appearance("trust_always", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("reject")
+        dialog.set_close_response("reject")
+
+        def on_response(dlg, response):
+            if response == "trust_always":
+                logger.info("User chose to permanently trust certificate for %s", host)
+                response_cb("T")
+            elif response == "trust_once":
+                logger.info("User chose to trust certificate once for %s", host)
+                response_cb("Y")
+            else:
+                logger.warning("User rejected certificate for %s; disconnecting session", host)
+                response_cb("N")
+                self.session_manager.terminate_session()
+                self.show_toast(f"Connection to {host} rejected (untrusted certificate).", timeout=4)
+
+        dialog.connect("response", on_response)
+        dialog.present()
+
     def _on_auth_url_needed(self, auth_url: str) -> None:
         """Handles FreeRDP's AAD OAuth authorization challenge using the active WebKit session."""
+        import urllib.parse
+        parsed = urllib.parse.urlparse(auth_url)
+        allowed_hosts = {
+            "login.microsoftonline.com",
+            "login.microsoftonline.us",
+            "certauth.login.microsoftonline.com",
+            "certauth.login.microsoftonline.us",
+        }
+        if parsed.scheme != "https" or (parsed.hostname or "").lower() not in allowed_hosts:
+            logger.error("Security violation: Blocked untrusted OAuth authorization URL: %s", auth_url)
+            self.show_toast("Security Warning: Blocked untrusted authentication URL!", timeout=6)
+            self.session_manager.terminate_session()
+            return
+
         logger.info("Handling FreeRDP AAD challenge: %s", auth_url)
         self.show_toast("Authorizing desktop session with Entra ID...", timeout=6)
 

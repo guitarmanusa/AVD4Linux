@@ -28,6 +28,111 @@ for _d in (USER_DATA_DIR, WEB_DATA_DIR, DOWNLOADS_DIR):
         pass
 
 
+ALLOWED_NAVIGATION_DOMAINS = (
+    "microsoft.com",
+    "microsoftonline.com",
+    "msauth.net",
+    "msftauth.net",
+    "azure.us",
+    "microsoftonline.us",
+    "azure.com",
+    "live.com",
+    "windows.net",
+    "windowsazure.us",
+    "windowsazure.com",
+)
+
+FORBIDDEN_RDP_DIRECTIVES = {
+    "drivestoredirect",
+    "redirectdrives",
+    "usbdevicestoredirect",
+    "devicestoredirect",
+    "alternate shell",
+    "initial program",
+    "redirectclipboard",
+    "redirectcomports",
+    "redirectprinters",
+    "redirectposdevices",
+    "shell working directory",
+    "exec",
+}
+
+
+def is_safe_rdp_directive(line: str) -> bool:
+    """Validates an individual RDP directive line against security rules."""
+    import re
+    line_clean = line.strip()
+    if not line_clean or line_clean.startswith(("#", ";")):
+        return True
+    parts = line_clean.split(":", 2)
+    key = parts[0].strip().lower()
+    if key in FORBIDDEN_RDP_DIRECTIVES:
+        logger.warning("Stripping forbidden RDP directive: %s", key)
+        return False
+    if key == "remoteapplicationprogram" and len(parts) == 3:
+        val = parts[2].strip()
+        # Allow standard AVD alias format (e.g. ||guid or ||alias), reject arbitrary commands/paths
+        if val and not re.fullmatch(r"\|\|[0-9a-zA-Z\-_]+", val):
+            logger.warning("Stripping non-standard remoteapplicationprogram: %s", val)
+            return False
+    return True
+
+
+def prepare_rdp_file(dest_path: str | Path) -> str:
+    """Ensures the downloaded file is a valid, sanitized .rdp file for FreeRDP."""
+    p = Path(dest_path).expanduser().resolve()
+    if not p.exists():
+        return str(dest_path)
+
+    rdp_out = p.with_suffix(".rdp")
+    try:
+        raw = p.read_bytes()
+        text = None
+        for enc in ["utf-8", "utf-16", "latin1"]:
+            try:
+                text = raw.decode(enc)
+                break
+            except Exception:
+                continue
+
+        if text:
+            import json
+            if text.strip().startswith("{") and "}" in text:
+                try:
+                    data = json.loads(text)
+                    for key in ["rdp", "connectionString", "rdpFile", "content"]:
+                        if key in data and isinstance(data[key], str):
+                            text = data[key]
+                            break
+                except Exception:
+                    pass
+
+            import base64
+            if not any(k in text for k in ["full address", "gatewayhostname", "loadbalanceinfo"]):
+                try:
+                    decoded = base64.b64decode(text.strip()).decode("utf-8", errors="replace")
+                    if any(k in decoded for k in ["full address", "gateway", "loadbalanceinfo"]):
+                        text = decoded
+                except Exception:
+                    pass
+
+            # Structured key-value directive sanitization
+            clean_lines = [
+                line for line in text.splitlines()
+                if is_safe_rdp_directive(line)
+            ]
+            text = "\r\n".join(clean_lines) + "\r\n"
+
+            rdp_out.write_text(text, encoding="utf-8")
+            os.chmod(rdp_out, stat.S_IRUSR | stat.S_IWUSR)
+            logger.info("Prepared sanitized RDP file for FreeRDP: %s", rdp_out)
+            return str(rdp_out)
+    except Exception as e:
+        logger.error("Failed to process RDP file %s: %s", dest_path, e)
+
+    return str(dest_path)
+
+
 class AVDBrowserView(Gtk.Box):
     """Encapsulates WebKit.WebView with AVD-specific handlers."""
 
@@ -166,7 +271,7 @@ class AVDBrowserView(Gtk.Box):
         decision: WebKit.PolicyDecision,
         decision_type: WebKit.PolicyDecisionType,
     ) -> bool:
-        """Intercepts navigation and response policy decisions to capture RDP files."""
+        """Intercepts navigation and response policy decisions to capture RDP files and restrict domains."""
         if decision_type == WebKit.PolicyDecisionType.RESPONSE:
             response = decision.get_response()
             mime = (response.get_mime_type() or "").lower()
@@ -187,6 +292,15 @@ class AVDBrowserView(Gtk.Box):
                 logger.info("Intercepting RDP navigation: %s", uri)
                 decision.download()
                 return True
+
+            import urllib.parse
+            parsed = urllib.parse.urlparse(uri)
+            if parsed.scheme in ("http", "https"):
+                hostname = (parsed.hostname or "").lower()
+                if not any(hostname == d or hostname.endswith("." + d) for d in ALLOWED_NAVIGATION_DOMAINS):
+                    logger.warning("Blocked navigation to unapproved domain: %s", hostname)
+                    decision.ignore()
+                    return True
         return False
 
     def _on_download_started(
@@ -209,11 +323,20 @@ class AVDBrowserView(Gtk.Box):
         DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
         os.chmod(DOWNLOADS_DIR, stat.S_IRWXU)
 
-        dest = str(DOWNLOADS_DIR / safe_filename)
+        # Non-destructive collision handling: do not overwrite existing files
+        dest_file = DOWNLOADS_DIR / safe_filename
+        stem = dest_file.stem
+        suffix = dest_file.suffix
+        counter = 1
+        while dest_file.exists():
+            dest_file = DOWNLOADS_DIR / f"{stem}_{counter}{suffix}"
+            counter += 1
+
+        dest = str(dest_file)
         logger.info("Saving downloaded file to: %s", dest)
         # WebKit requires an absolute filesystem path, NOT a URI
         download.set_destination(dest)
-        download.set_allow_overwrite(True)
+        download.set_allow_overwrite(False)
         return True
 
     def _on_download_finished(self, download: WebKit.Download) -> None:
@@ -223,61 +346,6 @@ class AVDBrowserView(Gtk.Box):
         dest_path = dest_path.replace("file://", "")
         logger.info("Download completed: %s", dest_path)
         if dest_path.endswith((".rdp", ".rdpw")) and self.on_rdp_file_ready:
-            ready_file = self._prepare_rdp_file(dest_path)
+            ready_file = prepare_rdp_file(dest_path)
             # Deliver to RDP launcher
             GLib.idle_add(self.on_rdp_file_ready, ready_file)
-
-    def _prepare_rdp_file(self, dest_path: str) -> str:
-        """Ensures the downloaded file is a valid .rdp file for FreeRDP."""
-        p = Path(dest_path)
-        if not p.exists():
-            return dest_path
-        
-        rdp_out = p.with_suffix(".rdp")
-        try:
-            raw = p.read_bytes()
-            text = None
-            for enc in ["utf-8", "utf-16", "latin1"]:
-                try:
-                    text = raw.decode(enc)
-                    break
-                except Exception:
-                    continue
-
-            if text:
-                import json
-                if text.strip().startswith("{") and "}" in text:
-                    try:
-                        data = json.loads(text)
-                        for key in ["rdp", "connectionString", "rdpFile", "content"]:
-                            if key in data and isinstance(data[key], str):
-                                text = data[key]
-                                break
-                    except Exception:
-                        pass
-
-                import base64
-                if not any(k in text for k in ["full address", "gatewayhostname", "loadbalanceinfo"]):
-                    try:
-                        decoded = base64.b64decode(text.strip()).decode("utf-8", errors="replace")
-                        if any(k in decoded for k in ["full address", "gateway", "loadbalanceinfo"]):
-                            text = decoded
-                    except Exception:
-                        pass
-
-                # Sanitize high-risk directives that could mount local drives or execute unauthorized binaries
-                FORBIDDEN_PREFIXES = ("drivestoredirect", "alternate shell", "initial program")
-                clean_lines = [
-                    line for line in text.splitlines()
-                    if not any(line.strip().lower().startswith(p) for p in FORBIDDEN_PREFIXES)
-                ]
-                text = "\r\n".join(clean_lines) + "\r\n"
-
-                rdp_out.write_text(text, encoding="utf-8")
-                os.chmod(rdp_out, stat.S_IRUSR | stat.S_IWUSR)
-                logger.info("Prepared RDP file for FreeRDP: %s", rdp_out)
-                return str(rdp_out)
-        except Exception as e:
-            logger.error("Failed to process downloaded RDP file %s: %s", dest_path, e)
-
-        return dest_path

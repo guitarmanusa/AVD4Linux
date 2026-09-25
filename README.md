@@ -164,7 +164,7 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 echo "kernel.apparmor_restrict_unprivileged_userns = 0" | sudo tee /etc/sysctl.d/60-apparmor-userns.conf
 sudo sysctl --system
 ```
-*(If unprivileged user namespaces are restricted and no AppArmor profile is installed, AVD4Linux automatically falls back so the app operates seamlessly).*
+*(For headless test containers or CI/CD environments without AppArmor, pass `--disable-webkit-sandbox` explicitly).*
 
 ---
 

@@ -5,14 +5,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH:-}"
 
-# Fallback for systems where host OS restricts unprivileged user namespaces (Ubuntu 24.04)
-# To resolve cleanly at the OS level: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-if [ -z "${WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS:-}" ]; then
-    if ! command -v bwrap >/dev/null 2>&1 || ! bwrap --ro-bind / / true >/dev/null 2>&1; then
-        export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
-    fi
-fi
-
 # Ensure systemd user p11-kit bridge is active if available
 if command -v systemctl >/dev/null 2>&1; then
     systemctl --user start p11-kit-server.service 2>/dev/null || true

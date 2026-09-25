@@ -29,6 +29,25 @@ def find_freerdp3() -> Optional[str]:
     return None
 
 
+def parse_cert_trust_prompt(buf: str) -> dict[str, str]:
+    """Extracts server certificate details from FreeRDP certificate trust prompt output."""
+    import re
+    details = {"host": "Unknown Gateway", "subject": "", "issuer": "", "fingerprint": ""}
+    m_host = re.search(r"Certificate details for ([^\s:]+)", buf) or re.search(r"The hostname used for this connection \(([^)]+)\)", buf)
+    if m_host:
+        details["host"] = m_host.group(1).strip()
+    m_sub = re.search(r"Subject:\s*([^\n]+)", buf)
+    if m_sub:
+        details["subject"] = m_sub.group(1).strip()
+    m_iss = re.search(r"Issuer:\s*([^\n]+)", buf)
+    if m_iss:
+        details["issuer"] = m_iss.group(1).strip()
+    m_fp = re.search(r"(?:fingerprint|Thumbprint):\s*([0-9a-fA-F:]{20,})", buf) or re.search(r"is ([0-9a-fA-F:]{20,})", buf)
+    if m_fp:
+        details["fingerprint"] = m_fp.group(1).strip()
+    return details
+
+
 class RDPSessionManager:
     """Manages active FreeRDP 3 processes with smart card redirection."""
 
@@ -38,6 +57,7 @@ class RDPSessionManager:
         self.master_fd: Optional[int] = None
         self._on_exit_callback: Optional[Callable[[int], None]] = None
         self.on_auth_url_needed: Optional[Callable[[str], None]] = None
+        self.on_cert_trust_needed: Optional[Callable[[dict[str, str], Callable[[str], None]], None]] = None
 
     def build_rdp_file_args(self, rdp_path: str | Path, extra_args: Optional[List[str]] = None) -> List[str]:
         """Builds command line arguments to launch an .rdp file with smart card redirection."""
@@ -107,6 +127,7 @@ class RDPSessionManager:
         rdp_path: str | Path,
         on_exit: Optional[Callable[[int], None]] = None,
         on_auth_url_needed: Optional[Callable[[str], None]] = None,
+        on_cert_trust_needed: Optional[Callable[[dict[str, str], Callable[[str], None]], None]] = None,
         extra_args: Optional[List[str]] = None,
     ) -> subprocess.Popen:
         """Launches FreeRDP 3 asynchronously using a pseudo-terminal with ECHO disabled."""
@@ -148,13 +169,14 @@ class RDPSessionManager:
         self.master_fd = master
         self._on_exit_callback = on_exit
         self.on_auth_url_needed = on_auth_url_needed
+        self.on_cert_trust_needed = on_cert_trust_needed
 
         t = threading.Thread(target=self._monitor_pty, args=(proc, master), daemon=True)
         t.start()
         return proc
 
     def _monitor_pty(self, proc: subprocess.Popen, master_fd: int) -> None:
-        """Monitors PTY output from FreeRDP, extracting any OAuth authorization prompts."""
+        """Monitors PTY output from FreeRDP, extracting any OAuth authorization prompts or certificate challenges."""
         import re
         buf = ""
         while proc.poll() is None:
@@ -177,8 +199,26 @@ class RDPSessionManager:
                             logger.debug("[FreeRDP] %s", line_clean)
 
                 if any(prompt in buf for prompt in ["(Y/T/N)", "(y/t/n)", "Do you trust the above certificate"]):
-                    logger.info("Responding to FreeRDP TLS certificate trust prompt on PTY")
-                    os.write(master_fd, b"Y\n")
+                    cert_info = parse_cert_trust_prompt(buf)
+                    logger.warning(
+                        "FreeRDP received untrusted TLS certificate challenge for host: %s (fingerprint: %s)",
+                        cert_info.get("host"),
+                        cert_info.get("fingerprint"),
+                    )
+
+                    def respond_cert(choice: str) -> None:
+                        try:
+                            val = (choice.strip()[:1].upper() or "N") + "\n"
+                            os.write(master_fd, val.encode())
+                        except Exception as e:
+                            logger.error("Failed to write certificate trust response to PTY: %s", e)
+
+                    if self.on_cert_trust_needed:
+                        self.on_cert_trust_needed(cert_info, respond_cert)
+                    else:
+                        logger.error("No certificate trust handler configured; rejecting untrusted certificate by default")
+                        respond_cert("N")
+                        self.terminate_session()
                     buf = ""
 
                 if "Browse to:" in buf and "Paste redirect URL here:" in buf:
