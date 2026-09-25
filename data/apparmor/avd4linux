@@ -5,7 +5,7 @@
 abi <abi/4.0>,
 include <tunables/global>
 
-profile avd4linux /{usr/local/,usr/,home/*/.local/,home/*/dev/AVD_for_linux/}bin/avd4linux flags=(unconfined) {
+profile avd4linux /{usr/local/,usr/,home/**/}bin/avd4linux flags=(unconfined) {
   userns,
 
   include if exists <local/avd4linux>
