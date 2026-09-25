@@ -1,0 +1,12 @@
+# AppArmor profile for AVD4Linux
+# Allows unprivileged user namespaces for WebKitGTK's Bubblewrap sandbox
+# on Ubuntu 24.04 without altering system-wide sysctl settings.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile avd4linux /{usr/local/,usr/,home/*/.local/,home/*/dev/AVD_for_linux/}bin/avd4linux flags=(unconfined) {
+  userns,
+
+  include if exists <local/avd4linux>
+}

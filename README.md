@@ -142,10 +142,20 @@ for cert in /usr/local/share/ca-certificates/*.crt; do
 done
 ```
 
-### 3. Ubuntu 24.04 Unprivileged User Namespaces (WebKit Sandbox)
+### 3. Ubuntu 24.04 Unprivileged User Namespaces (AppArmor & WebKit Sandbox)
 Ubuntu 24.04 LTS restricts unprivileged user namespaces by default (`kernel.apparmor_restrict_unprivileged_userns = 1`), which prevents WebKitGTK's Bubblewrap sandbox from setting up its UID map (`bwrap: setting up uid map: Permission denied`).
 
-To allow unprivileged user namespaces at the OS level so WebKitGTK runs with full sandboxing enabled:
+You can resolve this at the OS level using either of the following methods:
+
+#### Option A: Dedicated AppArmor Profile (Recommended — Secures Host)
+Install the included AVD4Linux AppArmor profile so that **only** AVD4Linux is granted unprivileged user namespace permissions, keeping the rest of your system fully protected:
+```bash
+sudo cp data/apparmor/avd4linux /etc/apparmor.d/
+sudo apparmor_parser -r /etc/apparmor.d/avd4linux
+```
+
+#### Option B: System-Wide Sysctl Toggle
+Alternatively, you can permit unprivileged user namespaces system-wide:
 ```bash
 # Temporary (active until reboot)
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -154,7 +164,7 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 echo "kernel.apparmor_restrict_unprivileged_userns = 0" | sudo tee /etc/sysctl.d/60-apparmor-userns.conf
 sudo sysctl --system
 ```
-*(If unprivileged user namespaces are restricted, AVD4Linux automatically applies WebKit's built-in fallback so the app continues to operate seamlessly).*
+*(If unprivileged user namespaces are restricted and no AppArmor profile is installed, AVD4Linux automatically falls back so the app operates seamlessly).*
 
 ---
 

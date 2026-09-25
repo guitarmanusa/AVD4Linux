@@ -242,6 +242,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
             logger.info("Captured OAuth redirect code for FreeRDP: %s", uri[:80])
             self.session_manager.feed_auth_url(uri)
             self.show_toast("Opening remote desktop session...", timeout=4)
+            self.browser.clear_cached_pin()
             GLib.idle_add(auth_win.close)
 
         def on_auth_policy(view, decision, decision_type):
@@ -319,6 +320,8 @@ class AVDMainWindow(Adw.ApplicationWindow):
                         pin = entry.get_text()
                         if pin:
                             logger.info("Submitting CAC PIN and Certificate to WebKit")
+                            # Temporarily cache PIN for 60s to fulfill the immediate back-to-back mTLS requests
+                            self.browser.set_cached_pin(pin, timeout_seconds=60)
                             scheme = request.get_scheme()
                             if scheme == WebKit.AuthenticationScheme.CLIENT_CERTIFICATE_PIN_REQUESTED:
                                 cred = WebKit.Credential.new_for_certificate_pin(
