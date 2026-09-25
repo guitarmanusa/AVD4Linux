@@ -10,7 +10,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("WebKit", "6.0")
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk
 
 from .browser import AVDBrowserView
 from .clouds import CLOUDS, CloudProfile, get_cloud
@@ -26,6 +26,17 @@ class AVDMainWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application, initial_cloud_id: str = "dod") -> None:
         super().__init__(application=app, title="AVD4Linux")
         self.set_default_size(1280, 850)
+        self.set_icon_name("org.avd4linux.AVD4Linux")
+
+        try:
+            display = Gdk.Display.get_default()
+            if display:
+                theme = Gtk.IconTheme.get_for_display(display)
+                repo_data_dir = Path(__file__).resolve().parent.parent.parent / "data"
+                if repo_data_dir.is_dir():
+                    theme.add_search_path(str(repo_data_dir))
+        except Exception as e:
+            logger.debug("Could not add local icon search path: %s", e)
 
         self.smartcard_monitor = SmartCardMonitor()
         self.session_manager = RDPSessionManager()
