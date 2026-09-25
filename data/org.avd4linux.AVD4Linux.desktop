@@ -2,7 +2,7 @@
 Name=AVD4Linux
 Comment=Native Linux client for Azure Virtual Desktop with Smart Card (DoD CAC/PIV) redirection
 Exec=avd4linux %U
-Icon=org.avd4linux.AVD4Linux
+Icon=org.avd4linux.AVD4Linux.svg
 Terminal=false
 Type=Application
 Categories=Network;RemoteAccess;GTK;
