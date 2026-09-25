@@ -149,32 +149,25 @@ def get_piv_certificate_uri() -> Optional[str]:
     return None
 
 
-def get_piv_private_key_uri(pin: Optional[str] = None) -> Optional[str]:
+def get_piv_private_key_uri() -> Optional[str]:
     """Derives the PKCS#11 private key URI matching the PIV Authentication cert."""
     import re
-    import urllib.parse
     cert_uri = get_piv_certificate_uri()
     if not cert_uri:
         return None
-    key_uri = re.sub(r";object=[^;]+", "", cert_uri).replace("type=cert", "type=private")
-    if pin:
-        key_uri = f"{key_uri}?pin-value={urllib.parse.quote(pin)}"
-    return key_uri
+    return re.sub(r";object=[^;]+", "", cert_uri).replace("type=cert", "type=private")
 
 
-def get_piv_tls_certificate(pin: Optional[str] = None):
-    """Loads the PIV certificate with private key as a Gio.TlsCertificate."""
-    import re
+def get_piv_tls_certificate():
+    """Loads the PIV certificate with private key URI as a Gio.TlsCertificate."""
     import gi
     from gi.repository import Gio
     cert_uri = get_piv_certificate_uri()
     if not cert_uri:
         return None
-    key_uri = get_piv_private_key_uri(pin=pin)
+    key_uri = get_piv_private_key_uri()
     try:
         return Gio.TlsCertificate.new_from_pkcs11_uris(cert_uri, key_uri)
     except Exception as e:
-        safe_uri = re.sub(r"pin-value=[^&]+", "pin-value=***", key_uri or cert_uri)
-        clean_err = re.sub(r"pin-value=[^&\s'\"]+", "pin-value=***", str(e))
-        logger.error("Failed to load Gio.TlsCertificate from %s: %s", safe_uri, clean_err)
+        logger.error("Failed to load Gio.TlsCertificate from %s: %s", cert_uri, e)
         return None

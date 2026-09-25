@@ -36,15 +36,11 @@ class AVDBrowserView(Gtk.Box):
         on_rdp_file_ready: Optional[Callable[[str], None]] = None,
         on_title_changed: Optional[Callable[[str], None]] = None,
         on_load_changed: Optional[Callable[[float, bool], None]] = None,
-        on_pin_requested: Optional[Callable[[WebKit.AuthenticationRequest], bool]] = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.on_rdp_file_ready = on_rdp_file_ready
         self.on_title_changed = on_title_changed
         self.on_load_changed = on_load_changed
-        self.on_pin_requested = on_pin_requested
-        self._cached_pin: Optional[str] = None
-        self._pin_timer_id: Optional[int] = None
 
         # Secure application storage directories with user-only permissions
         for d in [USER_DATA_DIR, WEB_DATA_DIR, DOWNLOADS_DIR]:
@@ -123,22 +119,6 @@ class AVDBrowserView(Gtk.Box):
         if self.on_title_changed:
             self.on_title_changed(title)
 
-    def set_cached_pin(self, pin: str, timeout_seconds: int = 60) -> None:
-        """Temporarily caches the PIN to satisfy consecutive mTLS requests, with strict timeout."""
-        self.clear_cached_pin()
-        self._cached_pin = pin
-        self._pin_timer_id = GLib.timeout_add_seconds(timeout_seconds, self.clear_cached_pin)
-
-    def clear_cached_pin(self) -> bool:
-        """Purges the cached PIN from memory."""
-        if hasattr(self, "_cached_pin") and self._cached_pin:
-            self._cached_pin = None
-            logger.info("Cached CAC PIN purged from memory")
-        if hasattr(self, "_pin_timer_id") and self._pin_timer_id:
-            GLib.source_remove(self._pin_timer_id)
-            self._pin_timer_id = None
-        return False
-
     def _on_load_state_changed(
         self, web_view: WebKit.WebView, load_event: WebKit.LoadEvent
     ) -> None:
@@ -147,50 +127,32 @@ class AVDBrowserView(Gtk.Box):
             self.progress_bar.set_fraction(0.1)
         elif load_event == WebKit.LoadEvent.FINISHED:
             self.progress_bar.set_visible(False)
-            uri = web_view.get_uri() or ""
-            # Once arrived at the AVD workspace, purge the temporary PIN cache
-            if "arm/webclient" in uri:
-                self.clear_cached_pin()
 
     def _on_authenticate(
         self, web_view: WebKit.WebView, request: WebKit.AuthenticationRequest
     ) -> bool:
-        """Handles authentication requests, including smartcard client certificates."""
+        """Handles authentication requests, providing PIV client certificate and delegating PIN to OS."""
         scheme = request.get_scheme()
         host = request.get_host()
         logger.info("Authentication requested: scheme=%s, host=%s", scheme, host)
 
         if scheme == WebKit.AuthenticationScheme.CLIENT_CERTIFICATE_REQUESTED:
             from .smartcard import get_piv_tls_certificate
-            if getattr(self, "_cached_pin", None):
-                cert = get_piv_tls_certificate(pin=self._cached_pin)
-                if cert:
-                    logger.info("Providing PIV client certificate with temporary cached PIN for %s", host)
-                    cred = WebKit.Credential.new_for_certificate(
-                        cert, WebKit.CredentialPersistence.FOR_SESSION
-                    )
-                    request.authenticate(cred)
-                    return True
-
-            if self.on_pin_requested:
-                logger.info("Prompting user for CAC PIN to unlock PIV Authentication key for %s", host)
-                return self.on_pin_requested(request)
-
             cert = get_piv_tls_certificate()
             if cert:
+                logger.info("Supplying PIV client certificate for %s: %s", host, cert.get_subject_name())
                 cred = WebKit.Credential.new_for_certificate(
                     cert, WebKit.CredentialPersistence.FOR_SESSION
                 )
                 request.authenticate(cred)
                 return True
-            return False
+            else:
+                logger.warning("No PIV certificate available on hardware token for %s", host)
+                return False
 
-        elif scheme == WebKit.AuthenticationScheme.CLIENT_CERTIFICATE_PIN_REQUESTED:
-            logger.info("Smart card PIN requested for host: %s", host)
-            if self.on_pin_requested:
-                return self.on_pin_requested(request)
-            return False
-
+        # For CLIENT_CERTIFICATE_PIN_REQUESTED and other schemes, return False
+        # so WebKitGTK and the OS native authentication dialog prompt the user directly.
+        # This guarantees zero PIN handling or memory storage in Python.
         return False
 
     def _on_decide_policy(
