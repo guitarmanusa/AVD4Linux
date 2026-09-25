@@ -29,6 +29,12 @@ def find_freerdp3() -> Optional[str]:
     return None
 
 
+def strip_ansi_codes(text: str) -> str:
+    """Removes ANSI terminal control escape sequences from output streams."""
+    import re
+    return re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", text)
+
+
 def parse_cert_trust_prompt(buf: str) -> dict[str, str]:
     """Extracts server certificate details from FreeRDP certificate trust prompt output."""
     import re
@@ -95,7 +101,11 @@ class RDPSessionManager:
             import re
             if tenant_id and re.fullmatch(r"^[0-9a-fA-F\-]{36}$", tenant_id):
                 # Dynamically determine cloud authority and scope based on gateway endpoint
-                is_usgov = (".azure.us" in gateway_host) or (".us" in gateway_host) or ("usgov" in gateway_host)
+                is_usgov = (
+                    gateway_host.endswith(".azure.us")
+                    or gateway_host.endswith(".microsoftonline.us")
+                    or "usgov" in gateway_host
+                )
                 authority = "login.microsoftonline.us" if is_usgov else "login.microsoftonline.com"
                 scope = "https://www.wvd.azure.us/.default" if is_usgov else "https://wvd.microsoft.com/.default"
 
@@ -188,7 +198,7 @@ class RDPSessionManager:
                 data = os.read(master_fd, 1024)
                 if not data:
                     break
-                text = data.decode("utf-8", errors="replace")
+                text = strip_ansi_codes(data.decode("utf-8", errors="replace"))
                 buf += text
                 if len(buf) > 4096:
                     buf = buf[-4096:]
@@ -196,8 +206,8 @@ class RDPSessionManager:
                 for line in text.splitlines():
                     line_clean = line.strip()
                     if line_clean:
-                        # Mask any lines that might contain OAuth authorization codes or tokens
-                        if any(k in line_clean.lower() for k in ["code=", "token=", "bearer", "access_token"]):
+                        # Mask any lines that might contain OAuth authorization codes or tokens (including URL-encoded %3D)
+                        if re.search(r"(?i)(code|token|bearer|access_token|refresh_token|id_token)(?:=|%3D)", line_clean):
                             logger.debug("[FreeRDP] [sensitive data masked]")
                         else:
                             logger.debug("[FreeRDP] %s", line_clean)

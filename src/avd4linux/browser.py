@@ -23,10 +23,7 @@ DOWNLOADS_DIR = USER_DATA_DIR / "downloads"
 # Ensure secure application storage directories exist with user-only permissions (0o700)
 for _d in (USER_DATA_DIR, WEB_DATA_DIR, DOWNLOADS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(_d, stat.S_IRWXU)
-    except Exception:
-        pass
+    os.chmod(_d, stat.S_IRWXU)
 
 
 ALLOWED_NAVIGATION_DOMAINS = (
@@ -138,16 +135,13 @@ def prepare_rdp_file(dest_path: str | Path) -> str:
 
         # Handle XML-wrapped RDP content (e.g. <RDP>...</RDP>) and decode XML/HTML entities
         import html
-        import xml.etree.ElementTree as ET
+        import re as _re
         if text.strip().startswith("<"):
             try:
-                root = ET.fromstring(text)
-                # Extract all text content from XML nodes
-                extracted = "".join(root.itertext())
+                extracted = _re.sub(r"<[^>]*>", "", text)
                 if extracted.strip():
                     text = extracted
             except Exception:
-                # If XML parsing fails, unescape entities directly
                 pass
 
         # Unescape XML/HTML entities (e.g. &#x0a;, &#10;) so encoded newlines expand before line splitting
