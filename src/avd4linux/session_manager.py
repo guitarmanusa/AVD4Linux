@@ -73,11 +73,12 @@ class RDPSessionManager:
             if tenant_id and re.fullmatch(r"^[0-9a-fA-F\-]{36}$", tenant_id):
                 # Use sovereign DoD login.microsoftonline.us authority with use-tenantid:on
                 # and specify avd-access redirect URI to https://login.microsoftonline.com/common/oauth2/nativeclient
-                # which is the exact registered redirect URI for client a85cf173-4192-42f8-81fa-777a763e6e2c
+                # which is the exact registered redirect URI for client a85cf173-4192-42f8-81fa-777a763e6e2c.
+                # Note: Pass as literal URL without % escapes because FreeRDP treats avd-access as a C printf format string.
                 args.append(
                     f"/azure:ad:login.microsoftonline.us,use-tenantid:on,tenantid:{tenant_id},"
                     f"avd-scope:https://www.wvd.azure.us/.default,"
-                    f"avd-access:https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient"
+                    f"avd-access:https://login.microsoftonline.com/common/oauth2/nativeclient"
                 )
             elif tenant_id:
                 logger.warning("Invalid tenant ID format in RDP file, ignoring.")
@@ -174,6 +175,11 @@ class RDPSessionManager:
                             logger.debug("[FreeRDP] [sensitive data masked]")
                         else:
                             logger.debug("[FreeRDP] %s", line_clean)
+
+                if any(prompt in buf for prompt in ["(Y/T/N)", "(y/t/n)", "Do you trust the above certificate"]):
+                    logger.info("Responding to FreeRDP TLS certificate trust prompt on PTY")
+                    os.write(master_fd, b"Y\n")
+                    buf = ""
 
                 if "Browse to:" in buf and "Paste redirect URL here:" in buf:
                     match = re.search(r"Browse to:\s*(https://\S+)", buf)

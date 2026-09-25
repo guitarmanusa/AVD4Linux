@@ -7,8 +7,8 @@ import os
 import subprocess
 import sys
 
-# Prevent WebKitGTK bubblewrap crash on systems with restricted user namespaces
-# ("bwrap: setting up uid map: Permission denied")
+# Check if unprivileged user namespaces are restricted by the host OS (e.g. Ubuntu 24.04 AppArmor)
+# To resolve at the OS level: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 if "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS" not in os.environ:
     try:
         res = subprocess.run(["bwrap", "--ro-bind", "/", "/", "true"], capture_output=True, timeout=1)

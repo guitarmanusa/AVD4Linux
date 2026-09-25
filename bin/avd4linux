@@ -5,13 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH:-}"
 
-# Prevent WebKitGTK bubblewrap crash on systems with restricted unprivileged user namespaces
-# ("bwrap: setting up uid map: Permission denied")
+# Fallback for systems where host OS restricts unprivileged user namespaces (Ubuntu 24.04)
+# To resolve cleanly at the OS level: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 if [ -z "${WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS:-}" ]; then
     if ! command -v bwrap >/dev/null 2>&1 || ! bwrap --ro-bind / / true >/dev/null 2>&1; then
-        export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
-    else
-        # If in a container or environment with no_new_privs, disable bubblewrap to prevent crash
         export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
     fi
 fi

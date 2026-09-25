@@ -142,6 +142,20 @@ for cert in /usr/local/share/ca-certificates/*.crt; do
 done
 ```
 
+### 3. Ubuntu 24.04 Unprivileged User Namespaces (WebKit Sandbox)
+Ubuntu 24.04 LTS restricts unprivileged user namespaces by default (`kernel.apparmor_restrict_unprivileged_userns = 1`), which prevents WebKitGTK's Bubblewrap sandbox from setting up its UID map (`bwrap: setting up uid map: Permission denied`).
+
+To allow unprivileged user namespaces at the OS level so WebKitGTK runs with full sandboxing enabled:
+```bash
+# Temporary (active until reboot)
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+# Permanent across reboots
+echo "kernel.apparmor_restrict_unprivileged_userns = 0" | sudo tee /etc/sysctl.d/60-apparmor-userns.conf
+sudo sysctl --system
+```
+*(If unprivileged user namespaces are restricted, AVD4Linux automatically applies WebKit's built-in fallback so the app continues to operate seamlessly).*
+
 ---
 
 ## Installation & Usage
