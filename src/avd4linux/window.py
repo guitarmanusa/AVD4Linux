@@ -50,14 +50,6 @@ class AVDMainWindow(Adw.ApplicationWindow):
         self.header_bar = Adw.HeaderBar()
         root_box.append(self.header_bar)
 
-        # Brand App Icon
-        self.app_icon = Gtk.Image.new_from_icon_name("org.avd4linux.AVD4Linux")
-        self.app_icon.set_pixel_size(24)
-        self.app_icon.set_margin_start(6)
-        self.app_icon.set_margin_end(4)
-        self.app_icon.set_tooltip_text("AVD4Linux")
-        self.header_bar.pack_start(self.app_icon)
-
         # Navigation buttons
         nav_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
         nav_box.add_css_class("linked")
