@@ -338,6 +338,16 @@ class AVDBrowserView(Gtk.Box):
                     logger.warning("Blocked navigation to unapproved domain: %s", hostname)
                     decision.ignore()
                     return True
+            elif parsed.scheme == "blob":
+                # Parse the inner URL origin (e.g. blob:https://rdweb.wvd.azure.us/uuid)
+                inner_parsed = urllib.parse.urlparse(parsed.path)
+                if inner_parsed.scheme in ("http", "https"):
+                    hostname = (inner_parsed.hostname or "").lower()
+                    if any(hostname == d or hostname.endswith("." + d) for d in ALLOWED_NAVIGATION_DOMAINS):
+                        return False  # Allow trusted blob origins
+                logger.warning("Blocked navigation to unauthorized blob origin: %s", parsed.path[:60])
+                decision.ignore()
+                return True
             elif parsed.scheme == "about" and parsed.path == "blank":
                 return False
             else:
