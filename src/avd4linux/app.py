@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import subprocess
+from pathlib import Path
 import sys
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,9 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib
+gi.require_version("Gdk", "4.0")
+gi.require_version("WebKit", "6.0")
+from gi.repository import Adw, Gdk, Gio, GLib, WebKit
 
 from .window import AVDMainWindow
 
@@ -163,6 +166,20 @@ def main() -> int:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    GLib.set_prgname("org.avd4linux.AVD4Linux")
+    GLib.set_application_name("AVD4Linux")
+    
+    try:
+        display = Gdk.Display.get_default()
+        if display:
+            theme = Gtk.IconTheme.get_for_display(display)
+            repo_data_dir = Path(__file__).resolve().parent.parent.parent / "data"
+            if repo_data_dir.is_dir():
+                theme.add_search_path(str(repo_data_dir))
+        Gtk.Window.set_default_icon_name("org.avd4linux.AVD4Linux")
+    except Exception as e:
+        logger.debug("Could not set default icon name/search path: %s", e)
+
     app = AVDApplication()
     return app.run(sys.argv)
 
