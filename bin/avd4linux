@@ -2,7 +2,7 @@
 # AVD4Linux — Azure Virtual Desktop for Linux launcher
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH:-}"
 
 # Ensure systemd user p11-kit bridge is active if available
