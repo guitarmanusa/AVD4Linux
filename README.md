@@ -31,29 +31,29 @@ AVD4Linux is built using modern, distro-agnostic Linux desktop technologies:
 AVD4Linux bridges modern Linux desktop security standards with Microsoft's Azure Virtual Desktop sovereign cloud infrastructure through a four-phase workflow:
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                              AVD4Linux                                 │
-│                                                                        │
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                    AVD4Linux                                 │
+│                                                                              │
 │  1. Entra ID CBA Login        2. Workspace Feed        3. Session Handshake  │
-│  ┌───────────────────┐        ┌───────────────────┐    ┌─────────────────┐ │
-│  │ WebKitGTK 6       │───────>│ Web Client Engine │───>│ Intercept .rdpw │ │
-│  │ + Native PIN Box  │        │ (Desktops / Apps) │    │ & Extract Tenant│ │
-│  └───────────────────┘        └───────────────────┘    └─────────────────┘ │
-│           ▲                                                      │         │
-│           │ PKCS#11                                              │         │
-│  ┌───────────────────┐                                           ▼         │
-│  │ Host PC/SC daemon │                                 ┌─────────────────┐ │
-│  │ (DoD CAC / AU9540)│                                 │ FreeRDP 3 PTY   │ │
-│  └───────────────────┘                                 │ AAD Token Bridge│ │
-│           ▲                                            └─────────────────┘ │
-│           │                                                      │         │
-└───────────┼──────────────────────────────────────────────────────┼─────────┘
+│  ┌───────────────────┐        ┌───────────────────┐    ┌─────────────────┐   │
+│  │ WebKitGTK 6       │───────>│ Web Client Engine │───>│ Intercept .rdpw │   │
+│  │ + Native PIN Box  │        │ (Desktops / Apps) │    │ & Extract Tenant│   │
+│  └───────────────────┘        └───────────────────┘    └─────────────────┘   │
+│           ▲                                                      │           │
+│           │ PKCS#11                                              │           │
+│  ┌───────────────────┐                                           ▼           │
+│  │ Host PC/SC daemon │                                 ┌─────────────────┐   │
+│  │ (DoD CAC / AU9540)│                                 │ FreeRDP 3 PTY   │   │
+│  └───────────────────┘                                 │ AAD Token Bridge│   │
+│           ▲                                            └─────────────────┘   │
+│           │                                                      │           │
+└───────────┼──────────────────────────────────────────────────────┼───────────┘
             │ MS-RDPESC Virtual Channel                            │
             ▼                                                      ▼
   ┌────────────────────────────────────────────────────────────────────────┐
   │                      Azure Virtual Desktop Host                        │
   │                  (Remote Windows Desktop Session)                      │
-  │   - Full CAC Passthrough to Windows Apps (Edge, Outlook, Teams)       │
+  │   - Full CAC Passthrough to Windows Apps (Edge, Outlook, Teams)        │
   └────────────────────────────────────────────────────────────────────────┘
 ```
 
