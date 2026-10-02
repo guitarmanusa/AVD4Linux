@@ -11,7 +11,6 @@ typedef void (*fn_gtk_editable_delete_text)(void *editable, int start_pos, int e
 typedef void* (*fn_webkit_credential_new_for_certificate_pin)(const char *pin, int persistence);
 typedef void (*fn_webkit_authentication_request_authenticate)(void *request, void *credential);
 typedef void (*fn_webkit_authentication_request_cancel)(void *request);
-typedef void (*fn_webkit_credential_free)(void *credential);
 typedef void (*fn_openssl_cleanse)(void *ptr, size_t len);
 
 static void secure_cleanse(void *v, size_t n) {
@@ -81,8 +80,6 @@ static PyObject* py_authenticate_pin(PyObject *self, PyObject *args) {
         (fn_webkit_authentication_request_authenticate)dlsym(RTLD_DEFAULT, "webkit_authentication_request_authenticate");
     fn_webkit_authentication_request_cancel p_webkit_authentication_request_cancel =
         (fn_webkit_authentication_request_cancel)dlsym(RTLD_DEFAULT, "webkit_authentication_request_cancel");
-    fn_webkit_credential_free p_webkit_credential_free =
-        (fn_webkit_credential_free)dlsym(RTLD_DEFAULT, "webkit_credential_free");
 
     if (!p_gtk_editable_get_text || !p_webkit_credential_new_for_certificate_pin ||
         !p_webkit_authentication_request_authenticate) {
@@ -126,13 +123,8 @@ static PyObject* py_authenticate_pin(PyObject *self, PyObject *args) {
         Py_RETURN_FALSE;
     }
 
-    /* Submit credential to WebKit authentication request */
+    /* Submit credential to WebKit authentication request (WebKit manages credential lifecycle) */
     p_webkit_authentication_request_authenticate(request_ptr, cred);
-
-    /* Free credential structure */
-    if (p_webkit_credential_free) {
-        p_webkit_credential_free(cred);
-    }
 
     Py_RETURN_TRUE;
 }

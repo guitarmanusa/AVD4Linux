@@ -519,7 +519,6 @@ class AVDMainWindow(Adw.ApplicationWindow):
                     logger.error("Error submitting PIN credential via C Extension Bridge: %s", e)
                     request.cancel()
                 finally:
-                    entry.set_text("")
                     dlg.close()
 
             dialog.connect("response", on_response)
