@@ -1,0 +1,20 @@
+--- pristine/channels/rdpecam/client/camera_device_main.c	2026-09-23 03:30:40.000000000 -0400
++++ freerdp-3.32.0/channels/rdpecam/client/camera_device_main.c	2026-09-28 23:57:19.331319577 -0400
+@@ -366,8 +366,17 @@
+ 	if (formatIndex < 0)
+ 		return FALSE;
+ 
++	CameraDeviceStream* stream = &dev->streams[streamIndex];
+ 	for (size_t x = 0; x < nMediaTypes; x++)
+ 	{
++		/* Compare against what was actually announced to the peer. The HAL fills in the
++		 * camera-side input format and never sets Flags, while the media type list
++		 * response substitutes the network-side output format and sets
++		 * DecodingRequired (see the loop in
++		 * ecam_dev_process_media_type_list_request). Without mirroring that, the
++		 * comparison below never matches once input and output formats differ. */
++		supported[x].Format = streamOutputFormat(stream);
++		supported[x].Flags = CAM_MEDIA_TYPE_DESCRIPTION_FLAG_DecodingRequired;
+ 		const CAM_MEDIA_TYPE_DESCRIPTION* cur = &supported[x];
+ 		if (memcmp(cur, type, sizeof(CAM_MEDIA_TYPE_DESCRIPTION)) == 0)
+ 			return TRUE;

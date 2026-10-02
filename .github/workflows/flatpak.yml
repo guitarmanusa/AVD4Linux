@@ -21,7 +21,7 @@ jobs:
 
       - name: Validate AppStream Metadata
         run: |
-          appstreamcli validate data/org.avd4linux.AVD4Linux.metainfo.xml || true
+          appstreamcli validate --pedantic data/org.avd4linux.AVD4Linux.metainfo.xml
 
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6

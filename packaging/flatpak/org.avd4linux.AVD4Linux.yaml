@@ -11,7 +11,7 @@ finish-args:
   - --socket=wayland
   - --device=dri
 
-  # Audio
+  # Audio (output playback + microphone capture pass-through)
   - --socket=pulseaudio
 
   # Network (Entra ID, AVD Gateway, WebSocket)
@@ -23,21 +23,55 @@ finish-args:
   - --filesystem=/run/pcscd
   - --filesystem=xdg-run/p11-kit
 
+  # Webcam capture. --device=all above already exposes /dev/video0, /dev/video1,
+  # ... (verified); Flatpak reserves /dev itself, so it cannot be shared with
+  # --filesystem. libv4l reads device metadata from udev, so that is exposed
+  # instead, and dconf carries the GTK/GDK session state.
+  - --filesystem=/run/udev:ro
+  - --filesystem=xdg-run/dconf:ro
+
   # Downloads & Configuration
   - --filesystem=xdg-download
   - --filesystem=~/.config/avd4linux:create
 
+  # WebKitGTK cannot create a nested user namespace inside the Flatpak sandbox
+  # (verified: bwrap is absent from the runtime and unprivileged userns is
+  # denied), so its renderer sandbox stays off. The outer Flatpak sandbox, which
+  # is what actually isolates the app, is unaffected.
+  - --env=WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+
 modules:
   # 1. PC/SC Lite client library (to communicate with host pcscd socket)
+  #
+  #    Upstream now publishes only 2.5.x, and only as .tar.xz; the old 2.0.3
+  #    .tar.bz2 URL this manifest used is a 404. The GNOME SDK ships no
+  #    libpcsclite, so it has to be built here.
   - name: pcsc-lite
+    # 2.5.x dropped autotools; meson is the only build system upstream ships.
+    buildsystem: meson
     config-opts:
-      - --disable-libudev
-      - --disable-libsystemd
-      - --without-systemdsystemunitdir
+      # Without this, meson installs to <prefix>/lib64 and the .pc file lands in
+      # /app/lib64/pkgconfig, which is NOT on Flatpak's PKG_CONFIG_PATH (that is
+      # /app/lib/pkgconfig). OpenSC then fails to find libpcsclite and aborts
+      # with "winscard.h is required for pcsc".
+      - --libdir=lib
+      - -Dlibudev=false
+      - -Dlibsystemd=false
+      - -Dpolkit=false
+      - -Dusb=false
+      - -Dserial=false
     sources:
       - type: archive
-        url: https://pcsclite.apdu.fr/files/pcsc-lite-2.0.3.tar.bz2
-        sha256: cd45b40cf6238b7e2832eddd1f016db90abecf1f335b7194f4a3aa8be8217d84
+        url: https://pcsclite.apdu.fr/files/pcsc-lite-2.5.1.tar.xz
+        sha256: bfcfe38a20afc49849c6bf55325e38f449fc4b26d3923fdc32b969ae41a8741b
+        # pcsc-lite is not on GitHub and publishes no version metadata, but the
+        # download directory is a browsable index, so scrape the newest tarball
+        # from it. The checker sorts all matches and takes the highest version.
+        x-checker-data:
+          type: html
+          url: https://pcsclite.apdu.fr/files/
+          version-pattern: 'pcsc-lite-([\d.]+)\.tar\.xz'
+          url-template: https://pcsclite.apdu.fr/files/pcsc-lite-$version.tar.xz
 
   # 2. OpenSC (PIV PKCS#11 provider)
   - name: opensc
@@ -45,41 +79,185 @@ modules:
       - --disable-man
       - --disable-doc
       - --disable-assert
+      # OpenSC 0.25.1 builds its fuzz harnesses unconditionally (ENABLE_FUZZING
+      # only swaps in a stub fuzzer.c), and fuzz_pkcs15init.c trips
+      # -Werror=maybe-uninitialized under strict mode with the SDK's GCC. The
+      # fuzzers are not part of the library, so relax strict mode instead.
+      - --disable-strict
     sources:
       - type: archive
         url: https://github.com/OpenSC/OpenSC/releases/download/0.25.1/opensc-0.25.1.tar.gz
-        sha256: 09dbb1845fa8a38ad1c59bb76ae680ce6ecda80c98f997cb244791a8ef0a0ff4
+        # The hash previously recorded here (09dbb184...) does not match the
+        # upstream 0.25.1 tarball; this is the verified value for that URL.
+        sha256: 23cbaae8bd7c8eb589b68c0a961dfb0d02007bea3165a3fc5efe2621d549b37b
+        x-checker-data:
+          type: json
+          url: https://api.github.com/repos/OpenSC/OpenSC/releases/latest
+          tag-query: .tag_name
+          version-query: $tag
+          url-query: .assets[] | select(.name == ("opensc-" + $version + ".tar.gz")) | .browser_download_url
+          release-url-template: https://github.com/OpenSC/OpenSC/releases/tag/$version
 
-  # 3. FreeRDP 3 (High-performance RDP client with Smart Card & AAD support)
-  - name: freerdp3
+  # 3. json-c. FreeRDP's -DWITH_AAD=ON hard-fails unless WITH_WINPR_JSON is on,
+  #    which requires one of json-c / cJSON / jansson. The GNOME 47 SDK ships
+  #    none of them, so the AAD (Entra ID auth) support this app depends on
+  #    would otherwise be impossible to build.
+  - name: json-c
     buildsystem: cmake-ninja
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
-      - -DWITH_SMARTCARD=ON
-      - -DWITH_PCSC=ON
-      - -DWITH_PKCS11=ON
-      - -DWITH_PULSE=ON
-      - -DWITH_WAYLAND=ON
-      - -DWITH_X11=ON
-      - -DWITH_FFMPEG=ON
-      - -DWITH_CAIRO=ON
-      - -DWITH_AAD=ON
-      - -DWITH_CLIENT_COMMON=ON
-      - -DWITH_SERVER=OFF
-      - -DWITH_CHANNELS=ON
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DBUILD_SHARED_LIBS=ON
+      - -DBUILD_STATIC_LIBS=OFF
+      - -DBUILD_TESTING=OFF
+      - -DJSON_C_USE_ICONV=OFF
+      - -DJSON_C_USE_INSTALL=ON
+      - -DJSON_C_ENABLE_LOCALES=OFF
+      - -DJSON_C_ENABLE_TESTS=OFF
     sources:
       - type: archive
-        url: https://pub.freerdp.com/releases/freerdp-3.10.2.tar.gz
-        sha256: 28bc45cf25178d8a7c29e1eb13e00cf0ca4ea63c784f938b813155f9e20a4b78
+        url: https://github.com/json-c/json-c/releases/download/json-c-0.19-20260627/json-c-0.19.tar.gz
+        sha256: 37ad0249902e301bd9052bf712e511fcc6acff4ecaad4b5900aad9ce564e26de
+        # json-c tags releases as json-c-<version>-<date> but names the asset
+        # json-c-<version>.tar.gz, so the date suffix has to be stripped from
+        # the version before it can be used to select the asset.
+        x-checker-data:
+          type: json
+          url: https://api.github.com/repos/json-c/json-c/releases/latest
+          tag-query: .tag_name
+          version-query: $tag | sub("^json-c-"; "") | sub("-20[0-9]+$"; "")
+          url-query: .assets[] | select(.name == ("json-c-" + $version + ".tar.gz")) | .browser_download_url
+          release-url-template: https://github.com/json-c/json-c/releases/tag/$tag
 
-  # 4. AVD4Linux Native Client Application
+  # 4. libusb-1.0. Required even for webcam-only redirection:
+  #    channels/rdpecam/client/v4l/CMakeLists.txt includes LIBUSB_1_INCLUDE_DIR
+  #    unconditionally, and the urbdrc channel pulls it in as well. The GNOME 47
+  #    SDK ships libusb runtime but no -dev headers, so CMake leaves
+  #    LIBUSB_1_INCLUDE_DIR-NOTFOUND and the generate step fails.
+  - name: libusb
+    # The 1.0.27 release tarball ships a pre-generated ./configure and has no
+    # meson.build, so use autotools via flatpak-builder's simple buildsystem.
+    buildsystem: autotools
+    config-opts:
+      - --disable-static
+      - --enable-shared
+      - --disable-examples
+      - --disable-tests
+    sources:
+      - type: archive
+        url: https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2
+        sha256: ffaa41d741a8a3bee244ac8e54a72ea05bf2879663c098c82fc5757853441575
+        x-checker-data:
+          type: json
+          url: https://api.github.com/repos/libusb/libusb/releases/latest
+          tag-query: .tag_name
+          version-query: $tag | sub("^v"; "")
+          url-query: .assets[] | select(.name == ("libusb-" + $version + ".tar.bz2")) | .browser_download_url
+          release-url-template: https://github.com/libusb/libusb/releases/tag/v$version
+
+  # 5. FreeRDP 3 (RDP client with Smart Card, AAD and webcam redirection)
+  #
+  #    The GNOME 47 SDK already provides the whole MS-RDPECAM dependency set:
+  #    libv4l2 (+ linux/videodev2.h) for capture, openh264 (+ wels/codec_api.h)
+  #    for the H.264 encoder, and ffmpeg/libswscale. Nothing extra needs to be
+  #    built. The ffmpeg encoder path is hardware-only (VAAPI/VDPAU/Vulkan), so
+  #    openh264 is what actually encodes the webcam stream.
+  - name: freerdp3
+    # Not buildsystem: cmake-ninja -- that runs cmake in the source directory,
+    # and FreeRDP 3.32 hard-fails an in-source build
+    # (cmake/PreventInSourceBuilds.cmake). Building into a subdirectory keeps
+    # upstream's check satisfied instead of setting its deprecated
+    # ALLOW_IN_SOURCE_BUILD escape hatch.
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/x86_64-linux-gnu
+      prepend-ld-library-path: /usr/lib/x86_64-linux-gnu
+      env:
+        CFLAGS: -Wno-error
+    build-commands:
+      - >-
+        cmake -B build -S . -G Ninja
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_INSTALL_PREFIX=/app
+        -DCMAKE_INSTALL_LIBDIR=lib
+        -DBUILD_SHARED_LIBS=ON
+        -DWITH_SMARTCARD=ON
+        -DWITH_PCSC=ON
+        -DWITH_PKCS11=ON
+        -DWITH_PULSE=ON
+        -DWITH_WAYLAND=OFF
+        -DWITH_X11=ON
+        -DWITH_CAIRO=ON
+        -DWITH_AAD=ON
+        -DWITH_CLIENT_COMMON=ON
+        -DWITH_SERVER=OFF
+        -DWITH_CHANNELS=ON
+        -DWITH_FUSE=OFF
+        -DWITH_CUPS=OFF
+        -DWITH_URBDRC=OFF
+        -DWITH_OPENH264=ON
+        -DWITH_FFMPEG=ON
+        -DWITH_SWSCALE=ON
+        -DWITH_V4L=ON
+        -DCHANNEL_RDPECAM_CLIENT=ON
+      - cmake --build build
+    post-install:
+      - cmake --install build
+      # find_freerdp3() searches for the xfreerdp3 name; FreeRDP installs the
+      # binary as "xfreerdp" and we provide that symlink ourselves on the
+      # native build too.
+      - ln -sf xfreerdp /app/bin/xfreerdp3
+    sources:
+      - type: archive
+        url: https://github.com/FreeRDP/FreeRDP/releases/download/3.32.0/freerdp-3.32.0.tar.gz
+        sha256: 855645e886f9749a485cb6630ffe934aa717d7b18cf716699ab1fc8864633210
+        # FreeRDP is the app's main upstream source, so let the checker keep the
+        # AppStream <releases> list in step with it.
+        x-checker-data:
+          type: html
+          url: https://github.com/FreeRDP/FreeRDP/releases.atom
+          version-pattern: 'releases/tag/([\d.]+)'
+          url-template: https://github.com/FreeRDP/FreeRDP/releases/download/$version/freerdp-$version.tar.gz
+          is-main-source: true
+          release-url-template: https://github.com/FreeRDP/FreeRDP/releases/tag/$version
+          # Cap automatic updates at 3.32.x. The rdpecam patch above is verified
+          # against 3.32.0 only, and a new FreeRDP minor release can move the
+          # code this patch touches (or break the CMake options this module
+          # relies on), so a checker-generated bump must be a deliberate,
+          # re-verified step rather than an automatic one.
+          versions:
+            "<": "3.33.0"
+      - type: patch
+        path: ../freerdp-patches/rdpecam-media-type-valid.patch
+
+  # 6. AVD4Linux Native Client Application
   - name: avd4linux
     buildsystem: simple
     build-commands:
-      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} .
+      # Build a wheel first, then install it with no network access. The SDK
+      # already provides PyGObject, so --no-deps is correct here. pip3 wheel is
+      # used instead of `python3 -m build` because the `build` frontend module
+      # is not part of the freedesktop SDK, while pip always is.
+      - pip3 wheel --no-deps --no-build-isolation --wheel-dir=dist .
+      - pip3 install --verbose --no-index --no-deps --prefix=${FLATPAK_DEST} dist/*.whl
       - install -Dm644 data/org.avd4linux.AVD4Linux.desktop ${FLATPAK_DEST}/share/applications/org.avd4linux.AVD4Linux.desktop
       - install -Dm644 data/org.avd4linux.AVD4Linux.metainfo.xml ${FLATPAK_DEST}/share/metainfo/org.avd4linux.AVD4Linux.metainfo.xml
       - install -Dm644 data/org.avd4linux.AVD4Linux.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.avd4linux.AVD4Linux.svg
     sources:
       - type: dir
         path: ../..
+        # Without this the whole repository is copied into the build sandbox,
+        # including .flatpak-builder, which holds every downloaded source
+        # tarball and can be several GB. It would also mean the app module
+        # ships its own build state.
+        skip:
+          - .git
+          - .flatpak-builder
+          - .flatpak-builder-build
+          - .venv
+          - venv
+          - __pycache__
+          - build
+          - dist
+          - '*.egg-info'
+          - '*.pyc'

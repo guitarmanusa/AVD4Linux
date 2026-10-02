@@ -86,3 +86,29 @@ Copy the following files into the branch root:
 This repository includes a GitHub Actions workflow at `.github/workflows/flatpak.yml`:
 - On every push and pull request, GitHub Actions compiles the Flatpak and validates AppStream metadata.
 - When you push a git release tag (e.g. `git tag v0.9.0 && git push origin v0.9.0`), GitHub Actions automatically builds `org.avd4linux.AVD4Linux.flatpak` and attaches the binary to your GitHub Release!
+
+## 5. Keeping Dependencies Up To Date
+
+Every external source in the manifest carries an `x-checker-data` block, so
+[flatpak-external-data-checker][edc] can propose bumps:
+
+```sh
+flatpak-external-data-checker --update org.avd4linux.AVD4Linux packaging/flatpak/org.avd4linux.AVD4Linux.yaml
+```
+
+Two things to know before wiring this into CI:
+
+- **A GitHub token is optional but recommended.** Three of the five sources
+  (OpenSC, json-c, libusb) query `api.github.com`, which allows only 60
+  unauthenticated requests per hour per IP. Pass `--token-file` to lift the
+  limit and avoid spurious failures.
+- **FreeRDP is deliberately version-capped.** Its checker block sets
+  `versions: {"<": "3.33.0"}` because the MS-RDPECAM patch in
+  `packaging/freerdp-patches/` is verified against 3.32.0 only. Patch releases
+  within 3.32.x are picked up automatically; a minor bump is a manual,
+  re-verified step. Note that the cap only works because that source uses the
+  `html` checker — the `json` checker silently ignores `versions`, so a
+  FreeRDP block built on `json` would happily propose 3.33+.
+
+[edc]: https://github.com/flathub/flatpak-external-data-checker
+

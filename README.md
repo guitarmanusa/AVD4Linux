@@ -1,6 +1,6 @@
 # AVD4Linux — Native Linux Client for Azure Virtual Desktop
 
-[![Flatpak Build](https://github.com/avd4linux/AVD4Linux/actions/workflows/flatpak.yml/badge.svg)](https://github.com/avd4linux/AVD4Linux/actions/workflows/flatpak.yml)
+[![Flatpak Build](https://github.com/guitarmanusa/AVD4Linux/actions/workflows/flatpak.yml/badge.svg)](https://github.com/guitarmanusa/AVD4Linux/actions/workflows/flatpak.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux-lightgrey.svg)](https://www.kernel.org)
 [![FreeRDP](https://img.shields.io/badge/FreeRDP-3.x-red.svg)](https://www.freerdp.com)
@@ -74,7 +74,7 @@ AVD4Linux bridges modern Linux desktop security standards with Microsoft's Azure
    - When the gateway requests an AAD session authorization code, AVD4Linux handles the exchange in the background using the active authenticated session and pipes the response directly into FreeRDP.
 
 4. **Native Remote Session with Smart Card Passthrough**:
-   - FreeRDP 3 establishes the session to the remote desktop with hardware acceleration (`+fonts /gfx /rfx /network:auto`).
+   - FreeRDP 3 establishes the session to the remote desktop with hardware acceleration, fullscreen mode, and floatbar (`+fonts /gfx /rfx /network:auto /f /floatbar`).
    - The smart card channel (`/smartcard /smartcard-logon`) connects the local PC/SC reader directly into the remote Windows session via the standard Microsoft MS-RDPESC protocol.
 
 ---
@@ -94,8 +94,170 @@ AVD4Linux bridges modern Linux desktop security standards with Microsoft's Azure
     - Authenticating with internal military/government web portals.
 - **Live Hardware Status**:
   - The window header bar features a live smart card monitor that displays card reader presence and card insertion status in real time.
+- **Optional Microphone & Webcam Pass-Through**:
+  - Two header bar toggles let you opt in to sharing local capture devices with the remote desktop.
+  - 🎤 **Microphone** uses the standard MS-RDPEAI (`audin`) audio input channel.
+  - 📷 **Webcam** uses the MS-RDPECAM (`rdpecam`) video capture channel.
+  - **Privacy by default**: both devices are **off** until you enable them, and choices persist in `~/.config/avd4linux/settings.json` (written with `0600` permissions).
+  - **A host pool cannot opt you in**: any `audiocapturemode` or `camerastoredirect` directives supplied by the server are stripped and replaced with your local toggle state.
+  - Changes apply to the **next** session; a running FreeRDP session is not reconfigured.
+  - **Webcam availability** depends on how FreeRDP was compiled — see below.
 - **Direct `.rdp` File Launcher**:
   - Includes an **"Open .rdp"** button in the header to launch any standalone `.rdp` connection file directly into FreeRDP 3 with smart card redirection and hardware acceleration.
+
+### Webcam / MS-RDPECAM Requirements
+
+Microphone redirection works with any FreeRDP 3 build. Webcam redirection additionally
+requires FreeRDP to have been compiled **with** the `rdpecam` client channel. On Linux that
+requires `libv4l` plus `CHANNEL_RDPECAM_CLIENT=ON`.
+
+#### Install location
+
+The custom build belongs at **`/opt/freerdp3-cam`**, which is the first location
+`find_freerdp3()` searches. AVD4Linux looks for it in this order:
+
+1. `/opt/freerdp3-cam/bin/xfreerdp3` — the custom build, **verified** to have MS-RDPECAM
+2. `/app/bin/xfreerdp3` — the same build inside the Flatpak, where the custom prefix
+   does not exist
+3. `/usr/local/bin/xfreerdp3`, `/usr/bin/xfreerdp3`, then `PATH`
+
+Do not install the custom build into `/opt/freerdp3`. The two prefixes are not
+interchangeable: a CMake `CMAKE_INSTALL_PREFIX` produces a flat `bin/` + `lib/` tree,
+whereas a packaged or staged install of the same version is `usr/bin` +
+`usr/lib/x86_64-linux-gnu`. Sharing a prefix would leave two competing `xfreerdp3`
+binaries with different library layouts and no way for a reader to tell which one the
+application is meant to launch. The `-cam` suffix also records the one capability that
+distinguishes this build from a stock one.
+
+The capability check in step 1 is deliberate: a binary's path does not prove it can
+redirect a webcam, because a build without `RUNPATH` silently loads the distro's
+`libfreerdp-client3` and loses the channel. AVD4Linux reads MS-RDPECAM support out of the
+shared object the executable actually resolves via `ldd`, and only then commits to that
+binary. If a custom build exists but lacks the channel, it is still used (so sessions work),
+and the missing capability is reported at startup.
+
+#### Build
+
+```bash
+sudo apt install build-essential cmake ninja-build pkg-config \
+  libssl-dev zlib1g-dev libx11-dev libxext-dev libxinerama-dev libxcursor-dev \
+  libxfixes-dev libxrandr-dev libxrender-dev libpulse-dev libpcsclite-dev \
+  libcairo2-dev libjansson-dev libv4l-dev \
+  libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
+
+cmake -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=/opt/freerdp3-cam \
+  -DCMAKE_INSTALL_LIBDIR=lib \
+  -DCMAKE_INSTALL_RPATH='$ORIGIN/../lib' \
+  -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+  -DWITH_CHANNELS=ON -DCHANNEL_RDPECAM_CLIENT=ON \
+  -DWITH_PULSE=ON -DWITH_X11=ON -DWITH_SMARTCARD=ON -DWITH_PCSC=ON -DWITH_CAIRO=ON \
+  -DWITH_AAD=ON -DWITH_SERVER=OFF -DWITH_WAYLAND=OFF \
+  -DWITH_KRB5=OFF -DWITH_CUPS=OFF -DWITH_FUSE=OFF \
+  -DWITH_FFMPEG=ON -DWITH_VIDEO_FFMPEG=ON -DWITH_DSP_FFMPEG=ON \
+  -DWITH_SWSCALE=ON -DWITH_SWSCALE_LOADING=OFF \
+  -DWITH_OPENH264=ON
+ninja -C build && ninja -C build install
+ln -sf xfreerdp /opt/freerdp3-cam/bin/xfreerdp3
+```
+
+Notes on those options, each of which was found the hard way:
+
+- **`WITH_SWSCALE_LOADING=OFF` is required.** The MJPEG decoder is guarded by
+  `#if defined(WITH_VIDEO_FFMPEG) && !defined(WITH_SWSCALE_LOADING)`. With runtime loading
+  enabled, FreeRDP silently drops MJPEG decode even though ffmpeg is linked in.
+- **`WITH_OPENH264=ON` is required** whenever the camera's native format differs from the
+  format negotiated on the wire, which is the normal case for a UVC webcam (it captures
+  MJPG, the session negotiates H264). Without an H264 encoder the stream cannot start.
+- **`RUNPATH` must be set.** A build without it silently loads the distro's
+  `libfreerdp-client3`, which lacks `rdpecam`, and the camera then appears unavailable.
+- `WITH_KRB5=OFF` / `WITH_CUPS=OFF` / `WITH_FUSE=OFF` merely drop unused features. Printing
+  is in fact explicitly blocked by AVD4Linux, so CUPS is redundant.
+
+#### Required patch: `media_type_valid()`
+
+FreeRDP 3.32.0 has a bug in the rdpecam client that prevents the stream from ever starting,
+regardless of build options. The camera is enumerated and appears in Windows, but the
+session reports *"Camera preview failed to start"*.
+
+`media_type_valid()` (in `channels/rdpecam/client/camera_device_main.c`) rebuilds the list of
+media types in order to validate the peer's request, but rebuilds it with values that differ
+from the ones actually advertised:
+
+| field | advertised to the peer | used during validation |
+| --- | --- | --- |
+| `Format` | `outputFormat` (e.g. H264) | `inputFormat` (e.g. MJPG) |
+| `Flags` | `DecodingRequired` | left at 0 — the HAL never sets it |
+
+Because the comparison is a `memcmp` over the whole struct, it can never succeed. Apply the
+patch in this repository before building:
+
+```bash
+cd freerdp-3.32.0
+patch -p1 < /path/to/avd4linux/packaging/freerdp-patches/rdpecam-media-type-valid.patch
+```
+
+The Flatpak manifest (`packaging/flatpak/org.avd4linux.AVD4Linux.yaml`) builds FreeRDP
+3.32.0 from source, applies this same patch, and enables `WITH_OPENH264`, `WITH_V4L`, and
+`CHANNEL_RDPECAM_CLIENT`. The GNOME 47 SDK already provides the whole MS-RDPECAM dependency
+set — libv4l2 with `linux/videodev2.h`, OpenH264 with `wels/codec_api.h`, and
+ffmpeg/libswscale — so none of those are built from source. The manifest therefore also
+enables `WITH_FFMPEG` and `WITH_SWSCALE`, which is safe here; the ffmpeg encoder path itself
+is restricted to hardware devices (VAAPI, VDPAU, Vulkan) and is not what a webcam uses.
+
+Three dependencies the SDK lacks *are* built from source:
+
+- **PC/SC Lite** and **OpenSC**, for smart card redirection. The host `pcscd` daemon is
+  reached over its socket, so the Flatpak needs `--filesystem=/run/pcscd`.
+- **json-c**, because `WITH_AAD=ON` (Entra ID / Azure AD sign-in) hard-fails in CMake
+  unless `WITH_WINPR_JSON` is on, which needs one of json-c, cJSON or jansson.
+- **libusb-1.0**. `channels/rdpecam/client/v4l/CMakeLists.txt` references
+  `LIBUSB_1_INCLUDE_DIR` unconditionally, and the SDK ships libusb without headers, so
+  without it the CMake generate step aborts with `LIBUSB_1_INCLUDE_DIR-NOTFOUND`.
+
+If your local `xfreerdp3` lacks the channel, AVD4Linux detects it at startup, keeps the
+webcam toggle disabled and tells you why instead of silently failing at connect time.
+Non-Flatpak installs also need read access to `/dev/video*` (the shipped AppArmor profile
+does not restrict device nodes).
+
+#### Host device detection
+
+On startup, AVD4Linux logs the availability of each redirectable device class so it is clear
+whether a missing device is a host problem, a FreeRDP build problem, or simply a toggle that
+is off:
+
+| Device | Detection method |
+| --- | --- |
+| Webcam | presence of `/dev/video*` nodes, plus an MS-RDPECAM check on the selected build |
+| Microphone | ALSA capture streams (`/proc/asound/cardN/pcmNc`) |
+| Smart Card | PC/SC reader enumeration via `SmartCardMonitor`, logged once when no reader is found |
+
+Typical output when everything is present and enabled:
+
+```
+INFO: Using custom FreeRDP build with MS-RDPECAM support: /opt/freerdp3-cam/bin/xfreerdp3
+INFO: Webcam detected and will be redirected to the next session.
+INFO: Microphone detected and will be redirected to the next session.
+```
+
+and when a device class is missing:
+
+```
+INFO: No webcam detected on this host (no /dev/video* nodes). Webcam redirection will be unavailable.
+INFO: No smart card reader detected on this host (PC/SC daemon (pcscd) inactive). Smart Card redirection (MS-RDPESC) will be unavailable.
+```
+
+To diagnose redirection problems, run with `--verbose` so FreeRDP's own output is logged,
+optionally filtered to one channel:
+
+```bash
+WLOG_LEVEL=DEBUG WLOG_FILTER="com.freerdp.channels.rdpecam:TRACE" \
+  avd4linux --enable-webcam --verbose 2>&1 | tee /tmp/rdpecam.log
+```
+
+> **Note:** AVD host pools must additionally permit audio/video input redirection for the
+> camera and microphone to appear inside the remote session.
 
 ---
 
@@ -145,6 +307,13 @@ done
 ### 3. Ubuntu 24.04 Unprivileged User Namespaces (AppArmor & WebKit Sandbox)
 Ubuntu 24.04 LTS restricts unprivileged user namespaces by default (`kernel.apparmor_restrict_unprivileged_userns = 1`), which prevents WebKitGTK's Bubblewrap sandbox from setting up its UID map (`bwrap: setting up uid map: Permission denied`).
 
+**This does not apply to the Flatpak build.** A Flatpak is already confined by an outer
+Bubblewrap sandbox, the runtime ships no `bwrap` binary, and the manifest passes
+`WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` to work around it. `check_bwrap_sandbox()`
+detects a running Flatpak and treats the probe as satisfied rather than aborting, so no
+host configuration is needed there. The steps below are for native (non-Flatpak) installs
+only.
+
 You can resolve this at the OS level using either of the following methods:
 
 #### Option A: Dedicated AppArmor Profile (Recommended — Secures Host)
@@ -187,6 +356,18 @@ bin/avd4linux --cloud commercial   # Azure Commercial
 
 # Or launch an existing .rdp file directly:
 bin/avd4linux --rdp ~/Downloads/my-session.rdp
+
+# Override device redirection for a run (also updates the saved setting):
+bin/avd4linux --enable-microphone
+bin/avd4linux --disable-microphone
+bin/avd4linux --enable-webcam
+bin/avd4linux --disable-webcam
+```
+
+### Running the Tests
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests -t .
 ```
 
 ### Desktop Menu Integration
