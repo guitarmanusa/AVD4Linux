@@ -173,21 +173,8 @@ def get_piv_private_key_uri(cert_uri: Optional[str] = None) -> Optional[str]:
     return uri
 
 
-_cached_piv_tls_cert = None
-
-
-def warm_piv_certificate_cache() -> None:
-    """Warms the PIV TLS certificate cache in the background on startup."""
-    import threading
-    threading.Thread(target=get_piv_tls_certificate, daemon=True).start()
-
-
 def get_piv_tls_certificate():
     """Loads the PIV certificate with private key URI as a Gio.TlsCertificate."""
-    global _cached_piv_tls_cert
-    if _cached_piv_tls_cert is not None:
-        return _cached_piv_tls_cert
-
     import gi
     from gi.repository import Gio
 
@@ -199,11 +186,7 @@ def get_piv_tls_certificate():
         return None
 
     try:
-        cert = Gio.TlsCertificate.new_from_pkcs11_uris(cert_uri, key_uri)
-        if cert and cert.get_subject_name():
-            _cached_piv_tls_cert = cert
-            return cert
+        return Gio.TlsCertificate.new_from_pkcs11_uris(cert_uri, key_uri)
     except Exception as e:
         logger.error("Failed to load Gio.TlsCertificate from %s: %s", cert_uri, e)
-
-    return None
+        return None

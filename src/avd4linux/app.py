@@ -8,18 +8,6 @@ import subprocess
 from pathlib import Path
 import sys
 
-# Force GnuTLS priority to TLS 1.2 with PKCS#1 v1.5 RSA-SHA256 signatures for DoD CAC / Smart Card hardware tokens.
-# Both TLS 1.3 and default TLS 1.2 negotiate RSA-PSS algorithms (RSA-PSS-RSAE-SHA256), which
-# the smart card chip rejects with CKR_KEY_HANDLE_INVALID / CKR_KEY_FUNCTION_NOT_PERMITTED.
-# Disabling TLS 1.3, RSA-PSS, and AES-256-GCM forces GnuTLS to negotiate AES-128-GCM (SHA-256 PRF)
-# with standard PKCS#1 v1.5 RSA-SHA256 signatures.
-os.environ["G_TLS_GNUTLS_PRIORITY"] = (
-    "NORMAL:%COMPAT:-VERS-TLS1.3:"
-    "-SIGN-RSA-PSS-RSAE-SHA256:-SIGN-RSA-PSS-RSAE-SHA384:-SIGN-RSA-PSS-RSAE-SHA512:"
-    "-SIGN-RSA-PSS-SHA256:-SIGN-RSA-PSS-SHA384:-SIGN-RSA-PSS-SHA512:"
-    "-AES-256-GCM"
-)
-os.environ.setdefault("GNUTLS_DEBUG_LEVEL", "4")
 os.environ.setdefault("OPENSC_CONF", "/app/etc/opensc.conf")
 
 # Configure GnuTLS to auto-load the native OpenSC PKCS#11 provider across all container processes
