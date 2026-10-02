@@ -22,6 +22,15 @@ os.environ["G_TLS_GNUTLS_PRIORITY"] = (
 os.environ.setdefault("GNUTLS_DEBUG_LEVEL", "4")
 os.environ.setdefault("OPENSC_CONF", "/app/etc/opensc.conf")
 
+# Configure GnuTLS to auto-load the native OpenSC PKCS#11 provider across all container processes
+# (including WebKitNetworkProcess) to bypass the socket RPC proxy
+try:
+    os.makedirs("/etc/gnutls", exist_ok=True)
+    with open("/etc/gnutls/pkcs11.conf", "w") as f:
+        f.write("load=/app/lib/opensc-pkcs11.so\n")
+except Exception:
+    pass
+
 # Initialize GnuTLS PKCS#11 subsystem directly with the native OpenSC provider
 # to bypass the p11-kit-client RPC proxy across the Flatpak sandbox boundary
 try:

@@ -21,7 +21,6 @@ finish-args:
   - --device=all
   - --system-talk-name=org.debian.pcscd
   - --filesystem=/run/pcscd
-  - --filesystem=xdg-run/p11-kit
 
   # Webcam capture. --device=all above already exposes /dev/video0, /dev/video1,
   # ... (verified); Flatpak reserves /dev itself, so it cannot be shared with
@@ -252,6 +251,9 @@ modules:
       - install -Dm644 data/org.avd4linux.AVD4Linux.metainfo.xml ${FLATPAK_DEST}/share/metainfo/org.avd4linux.AVD4Linux.metainfo.xml
       - install -Dm644 data/org.avd4linux.AVD4Linux.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.avd4linux.AVD4Linux.svg
       - install -Dm644 data/opensc.conf ${FLATPAK_DEST}/etc/opensc.conf
+      - install -Dm644 data/pkcs11.conf ${FLATPAK_DEST}/etc/pkcs11/pkcs11.conf
+      - install -Dm644 data/opensc.module ${FLATPAK_DEST}/etc/pkcs11/modules/opensc.module
+      - install -Dm644 data/p11-kit-trust.module ${FLATPAK_DEST}/etc/pkcs11/modules/p11-kit-trust.module
     sources:
       - type: dir
         path: ../..

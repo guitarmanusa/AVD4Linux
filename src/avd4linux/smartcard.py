@@ -167,12 +167,7 @@ def get_piv_private_key_uri(cert_uri: Optional[str] = None) -> Optional[str]:
     if not cert_uri:
         return None
 
-    # Transform cert URI to private key URI and explicitly target the PIV AUTH key object
-    # to prevent PKCS#11 modules from defaulting to the wrong slot (e.g. 9C Digital Signature)
-    uri = cert_uri.replace("type=cert", "type=private")
-    uri = re.sub(r";object=[^;]+", ";object=PIV%20AUTH%20key", uri)
-    if "object=" not in uri:
-        uri += ";object=PIV%20AUTH%20key"
+    uri = re.sub(r";object=[^;]+", "", cert_uri).replace("type=cert", "type=private")
     if "id=%01" not in uri and "id=01" not in uri:
         uri += ";id=%01"
     return uri
