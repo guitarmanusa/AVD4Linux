@@ -19,9 +19,10 @@ AVD4Linux is built using modern, distro-agnostic Linux desktop technologies:
 |---|---|---|
 | **User Interface** | **GTK 4** & **Libadwaita 1** | Native GNOME/Linux desktop interface with system styling, adaptive layout, and dark/light mode support. |
 | **Authentication & Web** | **WebKitGTK 6.0** (WebKit2) | Embedded web engine for Azure Virtual Desktop workspace navigation and Microsoft Entra ID authentication. |
-| **Smart Card Subsystem** | **PC/SC Lite** (`libpcsclite.so.1`) | Real-time monitoring of USB smart card readers (e.g. Alcor Micro AU9540, Identiv SCR3310, SCM SCR) and card insertion events via zero-dependency `ctypes`. |
-| **PKCS#11 Security Bridge** | **OpenSC** & **p11-kit** | Hardware token cryptographic provider exposing PIV Authentication certificates (`id=%01`) and keys for Entra ID Certificate-Based Authentication (CBA). |
-| **RDP Protocol Engine** | **FreeRDP 3.x** (`xfreerdp3`) | High-performance remote desktop client providing MS-RDPESC smart card channel redirection, hardware-accelerated graphics (`/gfx /rfx`), and Azure AD gateway integration. |
+| **Native C Security Bridge** | **Compiled C Extension** (`_pin_bridge`) | Audit-proof CAC PIN credential bridge transferring secrets directly from GTK to WebKit in C memory with cryptographic zeroing (`OPENSSL_cleanse` + `explicit_bzero`), completely bypassing the Python heap. |
+| **Smart Card Subsystem** | **PC/SC Lite** (`libpcsclite.so.1`) | Non-intrusive real-time monitoring of USB smart card readers via `SCardGetStatusChange` without connection resets or bus transaction interruptions. |
+| **PKCS#11 Security Bridge** | **OpenSC** & **GnuTLS** | In-process hardware token cryptographic provider auto-registered with GnuTLS (`/etc/gnutls/pkcs11.conf`) exposing PIV Authentication certificates (`id=%01`) and keys for Entra ID Certificate-Based Authentication (CBA). |
+| **RDP Protocol Engine** | **FreeRDP 3.x** (`xfreerdp3`) | High-performance remote desktop client providing MS-RDPESC smart card channel redirection, hardware-accelerated graphics (`/gfx /rfx`), X11/Xwayland display support, and automated AAD gateway integration (`/cert:tofu`). |
 | **App Packaging** | **Flatpak** (GNOME 47 Runtime) | Sandboxed, distro-agnostic distribution ready for standalone bundling and Flathub deployment. |
 
 ---
@@ -60,7 +61,7 @@ AVD4Linux bridges modern Linux desktop security standards with Microsoft's Azure
 1. **Sovereign Cloud Selection & Web Authentication**:
    - The user selects their Azure environment (DoD, GCC High, or Commercial) from the header dropdown.
    - AVD4Linux loads the designated entry point in the embedded WebKitGTK 6.0 view.
-   - When Microsoft Entra ID initiates mutual TLS (`*.certauth.login.microsoftonline.us`), AVD4Linux queries the hardware token via PKCS#11, prompts the user for their CAC PIN in a native Libadwaita modal dialog, and completes the client certificate handshake.
+   - When Microsoft Entra ID initiates mutual TLS (`*.certauth.login.microsoftonline.us`), AVD4Linux queries the hardware token via PKCS#11, prompts the user for their CAC PIN in a native Libadwaita modal dialog, and passes the credential directly via the **Native C Extension Bridge** (`_pin_bridge`). The PIN is never allocated on the Python garbage-collected heap and is cryptographically wiped from C stack memory immediately after delivery.
    - Session cookies and state persist securely across application restarts in `~/.local/share/avd4linux/webdata/`.
 
 2. **Workspace Navigation & Launch Interception**:
@@ -102,6 +103,14 @@ AVD4Linux bridges modern Linux desktop security standards with Microsoft's Azure
   - **A host pool cannot opt you in**: any `audiocapturemode` or `camerastoredirect` directives supplied by the server are stripped and replaced with your local toggle state.
   - Changes apply to the **next** session; a running FreeRDP session is not reconfigured.
   - **Webcam availability** depends on how FreeRDP was compiled — see below.
+- **Audit-Proof CAC PIN Security (Zero Python Heap Exposure)**:
+  - High-compliance environments (DoD, NIST, DISA STIG) require that plaintext secrets not persist in garbage-collected application runtimes.
+  - A custom C Extension Bridge (`_pin_bridge`) intercepts PIN submission directly from the GTK widget and transfers it to WebKitGTK in C memory.
+  - The plaintext PIN is never instantiated as an immutable Python `str` or heap object, bypassing Python's memory allocator and garbage collector completely.
+  - The temporary C stack buffer is cryptographically zeroed via `secure_cleanse()` using `OPENSSL_cleanse` (when available), `explicit_bzero`, and a volatile memory wipe loop to guarantee the compiler optimizer cannot strip the erasure.
+- **Hardware-Resilient Smart Card Subsystem**:
+  - Non-intrusive card polling via `SCardGetStatusChange` queries card presence in 0 ms without establishing exclusive card locks or issuing `SCardConnect`/`SCardDisconnect` calls that could interrupt active cryptographic operations.
+  - Auto-configured with universal ISO 7816-4 APDU chunking (`max_send_size = 255`, `max_recv_size = 256`) to ensure stability across all USB CCID readers (including integrated Alcor Micro AU9540 chipsets).
 - **Direct `.rdp` File Launcher**:
   - Includes an **"Open .rdp"** button in the header to launch any standalone `.rdp` connection file directly into FreeRDP 3 with smart card redirection and hardware acceleration.
 
@@ -390,6 +399,17 @@ AVD4Linux is structured for Flatpak distribution. The repository includes:
 - **GitHub Actions CI/CD**: `.github/workflows/flatpak.yml` (automatically compiles `.flatpak` binary bundles on release tags).
 
 See [docs/packaging-and-flathub.md](docs/packaging-and-flathub.md) for full instructions on building standalone `.flatpak` bundles and submitting to Flathub.
+
+---
+
+## Roadmap & Future Work
+
+The following items are planned for upcoming releases:
+
+- **GNOME Runtime Upgrade**: Migrate the base Flatpak runtime from `org.gnome.Platform//47` to `org.gnome.Platform//48` (and subsequent versions) to ensure continuous platform support and modern library dependencies.
+- **Flathub Submission**: Submit AVD4Linux to the official Flathub public repository for one-click installation across all major Linux distributions.
+- **Wayland-Native FreeRDP Client**: Explore integration with FreeRDP's native Wayland client (`wlfreerdp`) as upstream FreeRDP Wayland stabilization matures.
+- **Multi-Monitor Layouts**: Provide user controls for selective multi-monitor span and full desktop bounding configurations.
 
 ---
 
