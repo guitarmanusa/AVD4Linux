@@ -26,6 +26,17 @@ class SmartCardStatus:
     status_text: str = "No reader detected"
 
 
+class _SCARD_READERSTATE(C.Structure):
+    _fields_ = [
+        ("szReader", C.c_char_p),
+        ("pvUserData", C.c_void_p),
+        ("dwCurrentState", C.c_ulong),
+        ("dwEventState", C.c_ulong),
+        ("cbAtr", C.c_ulong),
+        ("rgbAtr", C.c_ubyte * 36),
+    ]
+
+
 class SmartCardMonitor:
     """Queries PC/SC for readers and smart cards."""
 
@@ -47,18 +58,16 @@ class SmartCardMonitor:
             self._lib.SCardListReaders.argtypes = [
                 C.c_ulong, C.c_void_p, C.c_void_p, C.POINTER(C.c_ulong)
             ]
-            self._lib.SCardConnect.argtypes = [
-                C.c_ulong, C.c_char_p, C.c_ulong, C.c_ulong,
-                C.POINTER(C.c_ulong), C.POINTER(C.c_ulong)
+            self._lib.SCardGetStatusChange.argtypes = [
+                C.c_ulong, C.c_ulong, C.POINTER(_SCARD_READERSTATE), C.c_ulong
             ]
-            self._lib.SCardDisconnect.argtypes = [C.c_ulong, C.c_ulong]
             self._lib.SCardReleaseContext.argtypes = [C.c_ulong]
         except Exception as e:
             logger.error("Failed to load libpcsclite bindings: %s", e)
             self._lib = None
 
     def check_status(self) -> SmartCardStatus:
-        """Polls current status of PC/SC reader and card."""
+        """Polls current status of PC/SC reader and card without connecting or interrupting transactions."""
         if not self._lib:
             return SmartCardStatus(status_text="PC/SC library not available")
 
@@ -83,20 +92,16 @@ class SmartCardMonitor:
                 return SmartCardStatus(status_text="No Smart Card readers found")
 
             reader = readers[0]
-            # Try to connect to card
-            h_card = C.c_ulong(0)
-            proto = C.c_ulong(0)
-            rv = self._lib.SCardConnect(
-                ctx,
-                reader.encode("utf-8"),
-                SCARD_SHARE_SHARED,
-                SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1,
-                C.byref(h_card),
-                C.byref(proto),
-            )
+            # Use non-intrusive SCardGetStatusChange to query card presence.
+            # Never use SCardConnect/Disconnect during polling as it interrupts active
+            # cryptographic transactions in OpenSC / GnuTLS and causes "PKCS #11 error in key".
+            rs = _SCARD_READERSTATE()
+            rs.szReader = reader.encode("utf-8")
+            rs.dwCurrentState = 0
+            rv = self._lib.SCardGetStatusChange(ctx, 0, C.byref(rs), 1)
+            has_card = (rv == 0) and bool(rs.dwEventState & SCARD_STATE_PRESENT)
 
-            if rv == 0:
-                self._lib.SCardDisconnect(h_card, 0)
+            if has_card:
                 display_reader = reader
                 if "AU9540" in reader:
                     display_reader = "Alcor AU9540"
@@ -165,24 +170,16 @@ def get_piv_tls_certificate():
 
     # 1. Fast-path: Standard PIV Authentication URI (ID %01, slot 9A)
     # Directly instantiates GTlsCertificate via GnuTLS in <50ms without blocking the GTK UI loop
-    try:
-        cert = Gio.TlsCertificate.new_from_pkcs11_uris(
-            "pkcs11:model=PKCS%2315%20emulated;id=%01;type=cert",
-            "pkcs11:model=PKCS%2315%20emulated;id=%01;type=private",
-        )
-        if cert:
-            return cert
-    except Exception as e:
-        logger.debug("Direct PIV URI load with model not available: %s", e)
-
-    try:
-        cert = Gio.TlsCertificate.new_from_pkcs11_uris(
-            "pkcs11:id=%01;type=cert", "pkcs11:id=%01;type=private"
-        )
-        if cert:
-            return cert
-    except Exception as e:
-        logger.debug("Direct PIV URI load not available, falling back to discovery: %s", e)
+    for model_clause in ("model=PKCS%2315%20emulated;", ""):
+        try:
+            cert = Gio.TlsCertificate.new_from_pkcs11_uris(
+                f"pkcs11:{model_clause}id=%01;type=cert",
+                f"pkcs11:{model_clause}id=%01;type=private",
+            )
+            if cert and cert.get_subject_name():
+                return cert
+        except Exception as e:
+            logger.debug("Direct PIV URI load (%s) not available: %s", model_clause, e)
 
     # 2. Fallback: Query p11tool if non-standard token layout
     cert_uri = get_piv_certificate_uri()

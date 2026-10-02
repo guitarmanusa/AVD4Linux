@@ -185,6 +185,8 @@ class AVDMainWindow(Adw.ApplicationWindow):
 
     def _poll_smartcard(self) -> bool:
         """Periodic background check for Smart Card."""
+        if getattr(self, "_polling_paused", False):
+            return True
         status = self.smartcard_monitor.check_status()
         self._log_smartcard_availability(status)
         if status.has_card:
@@ -476,15 +478,14 @@ class AVDMainWindow(Adw.ApplicationWindow):
     def _on_pin_requested(self, request) -> bool:
         """Prompts for the CAC PIN and submits it directly to WebKit with zero caching."""
         try:
-            status = self.smartcard_monitor.check_status()
-            card_desc = status.card_name
-            if status.has_card:
-                card_desc = f"{status.card_name} ({status.reader_name})"
+            # Pause PC/SC background polling during PIN authentication so reader transactions
+            # are not interrupted or reset by status checks.
+            self._polling_paused = True
 
             dialog = Adw.MessageDialog(
                 transient_for=self,
                 heading="Smart Card PIN Required",
-                body=f"Enter your PIN to authenticate with your CAC ({card_desc}) for Azure Virtual Desktop.",
+                body="Enter your PIN to authenticate with your CAC for Azure Virtual Desktop.",
             )
 
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -519,6 +520,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
                     logger.error("Error submitting PIN credential via C Extension Bridge: %s", e)
                     request.cancel()
                 finally:
+                    self._polling_paused = False
                     dlg.close()
 
             dialog.connect("response", on_response)
@@ -527,5 +529,6 @@ class AVDMainWindow(Adw.ApplicationWindow):
             entry.grab_focus()
             return True
         except Exception as e:
+            self._polling_paused = False
             logger.error("Error presenting PIN dialog: %s", e)
             return False
