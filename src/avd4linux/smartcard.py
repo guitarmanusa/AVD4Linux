@@ -133,7 +133,9 @@ def get_piv_certificate_uri() -> Optional[str]:
         logger.error("p11tool not found in secure system paths: %s", p11tool_path)
         return None
 
+    # Query specifically for the PIV Authentication certificate (slot 9A / ID %01)
     queries = [
+        [p11tool_path, "--list-certs", "pkcs11:id=%01"],
         [p11tool_path, "--list-all-certs", "pkcs11:model=PKCS%2315%20emulated;type=cert"],
         [p11tool_path, "--list-all-certs", "pkcs11:type=cert"],
     ]
@@ -147,20 +149,33 @@ def get_piv_certificate_uri() -> Optional[str]:
                     current_url = line.split("URL:", 1)[1].strip()
                 elif "Certificate for PIV Authentication" in line or "ID: 01" in line:
                     if current_url:
+                        if "id=" not in current_url:
+                            current_url += ";id=%01"
                         return current_url
+            if current_url and ("id=%01" in current_url or "id=01" in current_url or "PIV" in current_url):
+                return current_url
         except Exception as e:
             logger.error("Error finding PIV certificate URI: %s", e)
     return None
 
 
 def get_piv_private_key_uri(cert_uri: Optional[str] = None) -> Optional[str]:
-    """Derives the PKCS#11 private key URI matching the PIV Authentication cert."""
+    """Derives the PKCS#11 private key URI specifically targeting the PIV Authentication key (slot 9A)."""
     import re
     if not cert_uri:
         cert_uri = get_piv_certificate_uri()
     if not cert_uri:
         return None
-    return re.sub(r";object=[^;]+", "", cert_uri).replace("type=cert", "type=private")
+
+    # Transform cert URI to private key URI and explicitly target the PIV AUTH key object
+    # to prevent PKCS#11 modules from defaulting to the wrong slot (e.g. 9C Digital Signature)
+    uri = cert_uri.replace("type=cert", "type=private")
+    uri = re.sub(r";object=[^;]+", ";object=PIV%20AUTH%20key", uri)
+    if "object=" not in uri:
+        uri += ";object=PIV%20AUTH%20key"
+    if "id=%01" not in uri and "id=01" not in uri:
+        uri += ";id=%01"
+    return uri
 
 
 _cached_piv_tls_cert = None
