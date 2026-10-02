@@ -385,7 +385,7 @@ class AVDBrowserView(Gtk.Box):
                 return False
 
         elif scheme == WebKit.AuthenticationScheme.CLIENT_CERTIFICATE_PIN_REQUESTED:
-            logger.info("Smart card PIN requested for host: %s", host)
+            logger.info("Smart card PIN requested for host: %s, flags: %s", host, request.get_certificate_pin_flags())
             if self.on_pin_requested:
                 return self.on_pin_requested(request)
             return False

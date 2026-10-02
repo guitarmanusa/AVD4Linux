@@ -123,6 +123,8 @@ static PyObject* py_authenticate_pin(PyObject *self, PyObject *args) {
         Py_RETURN_FALSE;
     }
 
+    fprintf(stderr, "[PIN_BRIDGE] Submitting WebKit credential (PIN length: %zu)\n", pin_len);
+
     /* Submit credential to WebKit authentication request (WebKit manages credential lifecycle) */
     p_webkit_authentication_request_authenticate(request_ptr, cred);
 
