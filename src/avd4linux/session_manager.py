@@ -349,6 +349,9 @@ class RDPSessionManager:
             "/floatbar",
         ]
 
+        if all_hosts_trusted:
+            args.append("/cert:tofu")
+
         # Only redirect Smart Card hardware if destination hosts belong to trusted AVD infrastructure
         if all_hosts_trusted or allow_untrusted_smartcard:
             args.insert(2, "/smartcard")
@@ -500,27 +503,38 @@ class RDPSessionManager:
                 if any(prompt in buf for prompt in ["(Y/T/N)", "(y/t/n)", "Do you trust the above certificate"]) and not self._cert_prompt_pending:
                     self._cert_prompt_pending = True
                     cert_info = parse_cert_trust_prompt(buf)
-                    logger.error(
-                        "SECURITY VIOLATION: Rejecting untrusted TLS certificate challenge for host: %s (fingerprint: %s). Session aborted.",
-                        cert_info.get("host"),
-                        cert_info.get("fingerprint"),
-                    )
-
-                    # Fail closed: reject untrusted certificate automatically to prevent MitM attacks
-                    try:
-                        os.write(master_fd, b"N\n")
-                    except Exception as e:
-                        logger.error("Failed to write certificate rejection to PTY: %s", e)
-
-                    if self.on_cert_trust_needed:
+                    host = (cert_info.get("host") or "").lower()
+                    from .clouds import is_trusted_avd_host
+                    if host and is_trusted_avd_host(host):
+                        logger.info("Accepting TLS certificate for verified AVD infrastructure host: %s", host)
                         try:
-                            self.on_cert_trust_needed(cert_info, lambda *_: None)
+                            os.write(master_fd, b"Y\n")
                         except Exception as e:
-                            logger.error("Error invoking cert_trust handler: %s", e)
+                            logger.error("Failed to write certificate acceptance to PTY: %s", e)
+                        self._cert_prompt_pending = False
+                        buf = ""
+                    else:
+                        logger.error(
+                            "SECURITY VIOLATION: Rejecting untrusted TLS certificate challenge for host: %s (fingerprint: %s). Session aborted.",
+                            cert_info.get("host"),
+                            cert_info.get("fingerprint"),
+                        )
 
-                    self._cert_prompt_pending = False
-                    self.terminate_session()
-                    buf = ""
+                        # Fail closed: reject untrusted certificate automatically to prevent MitM attacks
+                        try:
+                            os.write(master_fd, b"N\n")
+                        except Exception as e:
+                            logger.error("Failed to write certificate rejection to PTY: %s", e)
+
+                        if self.on_cert_trust_needed:
+                            try:
+                                self.on_cert_trust_needed(cert_info, lambda *_: None)
+                            except Exception as e:
+                                logger.error("Error invoking cert_trust handler: %s", e)
+
+                        self._cert_prompt_pending = False
+                        self.terminate_session()
+                        buf = ""
 
                 if "Browse to:" in buf and "Paste redirect URL here:" in buf:
                     match = re.search(r"Browse to:\s*(https://\S+)", buf)
