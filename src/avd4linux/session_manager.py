@@ -372,7 +372,7 @@ class RDPSessionManager:
                 args.append(
                     f"/azure:ad:{authority},use-tenantid:on,tenantid:{tenant_id},"
                     f"avd-scope:{scope},"
-                    f"avd-access:https://{authority}/common/oauth2/nativeclient"
+                    "avd-access:https://login.microsoftonline.com/common/oauth2/nativeclient"
                 )
             else:
                 logger.warning(

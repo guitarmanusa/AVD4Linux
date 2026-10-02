@@ -369,7 +369,7 @@ class TestSecurityGuards(unittest.TestCase):
         # Must route to login.microsoftonline.us authority AND avd-access redirect URI
         aad_flag = [a for a in args if a.startswith("/azure:ad:")][0]
         self.assertIn("login.microsoftonline.us", aad_flag)
-        self.assertIn("avd-access:https://login.microsoftonline.us/common/oauth2/nativeclient", aad_flag)
+        self.assertIn("avd-access:https://login.microsoftonline.com/common/oauth2/nativeclient", aad_flag)
         self.assertIn("/smartcard", args)
 
     def test_piv_certificate_selection_without_fallback(self):
