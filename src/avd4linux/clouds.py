@@ -64,6 +64,60 @@ CLOUDS = {
 CONFIG_DIR = Path.home() / ".config" / "avd4linux"
 KEYS: tuple[str, ...] = tuple(CLOUDS)
 
+# Trusted Microsoft AVD gateway and target host domain suffixes.
+# Used to validate hosts before routing Entra ID tokens or exposing Smart Card hardware.
+TRUSTED_AVD_DOMAINS: tuple[str, ...] = (
+    "wvd.microsoft.com",
+    "rds.microsoft.com",
+    "microsoft.com",
+    "azure.com",
+    "cloudapp.net",
+    "cloudapp.azure.com",
+    "microsoftonline.com",
+    "wvd.azure.us",
+    "microsoftonline.us",
+    "azure.us",
+    "cloudapp.usgovcloudapi.net",
+    "wvd.azure.cn",
+    "microsoftonline.cn",
+    "azure.cn",
+)
+
+USGOV_AVD_DOMAINS: tuple[str, ...] = (
+    "wvd.azure.us",
+    "microsoftonline.us",
+    "azure.us",
+    "cloudapp.usgovcloudapi.net",
+)
+
+
+def is_trusted_avd_host(host: str | None) -> bool:
+    """Validates whether a hostname belongs to trusted Microsoft AVD infrastructure.
+
+    Used to prevent Confused Deputy token leaks and unauthorized smart card
+    redirection when parsing user-supplied .rdp files.
+    """
+    if not host:
+        return False
+    clean_host = host.split(":")[0].strip().lower()
+    if not clean_host:
+        return False
+    return any(
+        clean_host == domain or clean_host.endswith("." + domain)
+        for domain in TRUSTED_AVD_DOMAINS
+    )
+
+
+def is_usgov_avd_host(host: str | None) -> bool:
+    """Returns True if host is a verified US Government AVD host."""
+    if not host or not is_trusted_avd_host(host):
+        return False
+    clean_host = host.split(":")[0].strip().lower()
+    return any(
+        clean_host == domain or clean_host.endswith("." + domain)
+        for domain in USGOV_AVD_DOMAINS
+    )
+
 
 def get_cloud(cloud_id: str) -> CloudProfile:
     key = cloud_id.lower()

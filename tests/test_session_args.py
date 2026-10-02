@@ -242,3 +242,128 @@ class TestFlatpakSandboxDetection(unittest.TestCase):
             with mock.patch.object(app, "in_flatpak", return_value=True):
                 with mock.patch.object(app.shutil, "which", return_value=None):
                     self.assertTrue(app.check_bwrap_sandbox())
+
+
+class TestSecurityGuards(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.dir = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_is_trusted_avd_host(self):
+        from avd4linux.clouds import is_trusted_avd_host, is_usgov_avd_host
+
+        # Trusted commercial and government hosts
+        self.assertTrue(is_trusted_avd_host("g-us-1.wvd.microsoft.com"))
+        self.assertTrue(is_trusted_avd_host("g-us-1.wvd.microsoft.com:443"))
+        self.assertTrue(is_trusted_avd_host("rdweb.wvd.azure.us"))
+        self.assertTrue(is_trusted_avd_host("myvm.cloudapp.azure.com"))
+
+        # Malicious or untrusted hosts
+        self.assertFalse(is_trusted_avd_host("malicious-usgov.com"))
+        self.assertFalse(is_trusted_avd_host("attacker.com"))
+        self.assertFalse(is_trusted_avd_host("attacker.azurewebsites.net"))
+        self.assertFalse(is_trusted_avd_host("attacker.blob.core.windows.net"))
+        self.assertFalse(is_trusted_avd_host(""))
+        self.assertFalse(is_trusted_avd_host(None))
+
+        # US Gov detection
+        self.assertTrue(is_usgov_avd_host("rdweb.wvd.azure.us"))
+        self.assertFalse(is_usgov_avd_host("g-us-1.wvd.microsoft.com"))
+        self.assertFalse(is_usgov_avd_host("malicious-usgov.com"))
+
+    def test_confused_deputy_prevention_untrusted_gateway(self):
+        from avd4linux.session_manager import RDPSessionManager
+        mgr = RDPSessionManager()
+        mgr.executable = "/fake/bin/xfreerdp3"
+
+        rdp_path = self.dir / "malicious.rdp"
+        rdp_path.write_text(
+            "aadtenantid:s:11111111-2222-3333-4444-555555555555\n"
+            "gatewayhostname:s:malicious-usgov.com\n",
+            encoding="utf-8"
+        )
+        args = mgr.build_rdp_file_args(rdp_path)
+
+        # Must NOT include Entra ID token routing or Smart Card redirection
+        self.assertFalse(any(a.startswith("/azure:ad:") for a in args))
+        self.assertNotIn("/smartcard", args)
+        self.assertNotIn("/smartcard-logon", args)
+
+    def test_confused_deputy_prevention_untrusted_target(self):
+        from avd4linux.session_manager import RDPSessionManager
+        mgr = RDPSessionManager()
+        mgr.executable = "/fake/bin/xfreerdp3"
+
+        rdp_path = self.dir / "malicious_target.rdp"
+        rdp_path.write_text(
+            "aadtenantid:s:11111111-2222-3333-4444-555555555555\n"
+            "full address:s:attacker.com\n",
+            encoding="utf-8"
+        )
+        args = mgr.build_rdp_file_args(rdp_path)
+
+        # Must NOT include Entra ID token routing or Smart Card redirection
+        self.assertFalse(any(a.startswith("/azure:ad:") for a in args))
+        self.assertNotIn("/smartcard", args)
+        self.assertNotIn("/smartcard-logon", args)
+
+    def test_trusted_avd_hosts_enable_token_and_smartcard(self):
+        from avd4linux.session_manager import RDPSessionManager
+        mgr = RDPSessionManager()
+        mgr.executable = "/fake/bin/xfreerdp3"
+
+        rdp_path = self.dir / "valid_avd.rdp"
+        rdp_path.write_text(
+            "aadtenantid:s:11111111-2222-3333-4444-555555555555\n"
+            "gatewayhostname:s:g-us-1.wvd.microsoft.com:443\n"
+            "full address:s:c-us-1.wvd.microsoft.com\n",
+            encoding="utf-8"
+        )
+        args = mgr.build_rdp_file_args(rdp_path)
+
+        # Must include Entra ID token routing and Smart Card redirection
+        self.assertTrue(any(a.startswith("/azure:ad:login.microsoftonline.com") for a in args))
+        self.assertIn("/smartcard", args)
+        self.assertIn("/smartcard-logon", args)
+
+    def test_trusted_usgov_avd_hosts_route_to_usgov_authority(self):
+        from avd4linux.session_manager import RDPSessionManager
+        mgr = RDPSessionManager()
+        mgr.executable = "/fake/bin/xfreerdp3"
+
+        rdp_path = self.dir / "usgov_avd.rdp"
+        rdp_path.write_text(
+            "aadtenantid:s:11111111-2222-3333-4444-555555555555\n"
+            "gatewayhostname:s:g-usgov-1.wvd.azure.us:443\n",
+            encoding="utf-8"
+        )
+        args = mgr.build_rdp_file_args(rdp_path)
+
+        # Must route to login.microsoftonline.us authority
+        self.assertTrue(any(a.startswith("/azure:ad:login.microsoftonline.us") for a in args))
+        self.assertIn("/smartcard", args)
+
+    def test_allowed_navigation_domains_whitelist(self):
+        from avd4linux.browser import ALLOWED_NAVIGATION_DOMAINS
+
+        def is_allowed(hostname):
+            return any(hostname == d or hostname.endswith("." + d) for d in ALLOWED_NAVIGATION_DOMAINS)
+
+        # Allowed AVD and identity domains
+        self.assertTrue(is_allowed("rdweb.wvd.microsoft.com"))
+        self.assertTrue(is_allowed("login.microsoftonline.com"))
+        self.assertTrue(is_allowed("login.microsoftonline.us"))
+        self.assertTrue(is_allowed("login.windows.net"))
+        self.assertTrue(is_allowed("aadcdn.msauth.net"))
+
+        # Blocked subdomains and generic cloud domains
+        self.assertFalse(is_allowed("attacker.blob.core.windows.net"))
+        self.assertFalse(is_allowed("attacker.azurewebsites.net"))
+        self.assertFalse(is_allowed("attacker.azure.com"))
+        self.assertFalse(is_allowed("attacker.windows.net"))
+        self.assertFalse(is_allowed("malicious.com"))
