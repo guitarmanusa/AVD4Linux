@@ -66,6 +66,16 @@ FORBIDDEN_RDP_DIRECTIVES_NORMALIZED = {
 }
 
 
+def normalize_directive_key(line: str) -> str:
+    """Returns the normalized (lowercase, alphanumeric-only) key of an RDP directive line."""
+    import re
+    line_clean = line.strip()
+    if not line_clean or line_clean.startswith(("#", ";")):
+        return ""
+    raw_key = line_clean.split(":", 1)[0].strip().lower()
+    return re.sub(r"[^a-z0-9]", "", raw_key)
+
+
 def is_safe_rdp_directive(line: str) -> bool:
     """Validates an individual RDP directive line against security rules using normalized key matching."""
     import re
@@ -90,8 +100,58 @@ def is_safe_rdp_directive(line: str) -> bool:
     return True
 
 
-def prepare_rdp_file(dest_path: str | Path) -> str:
-    """Ensures the downloaded file is a valid, sanitized .rdp file for FreeRDP (Fail-Closed, Atomic)."""
+# Local device redirection directives controlled by the in-app toggles. A server
+# supplied .rdp must never be able to enable microphone or camera redirection on
+# its own: the user's explicit toggle is the only thing that may turn them on.
+#
+# FreeRDP matches these keys with _stricmp(), so "CameraStoreRedirect" is honoured
+# just like "camerastoredirect". Normalising by lowercasing alone yields two
+# distinct spellings ("camerastoredirect" and "camerastoreredirect"), and both must
+# be listed or a differently-cased server directive would bypass the filter.
+DEVICE_DIRECTIVE_KEYS = (
+    "audiocapturemode",
+    "camerastoredirect",
+    "camerastoreredirect",
+)
+
+
+def enforce_device_directives(
+    lines: list[str],
+    microphone_enabled: bool = False,
+    webcam_enabled: bool = False,
+) -> list[str]:
+    """Strips server-supplied device directives and re-applies the user's toggle state.
+
+    Any inbound 'audiocapturemode' or 'camerastoredirect' entries are removed
+    first so a host pool cannot opt the user into local capture hardware, then
+    the directives implied by the current toggles are appended.
+    """
+    out: list[str] = []
+    for line in lines:
+        if normalize_directive_key(line) in DEVICE_DIRECTIVE_KEYS:
+            logger.info("Stripping server-supplied device directive: %s", line.strip().split(":")[0])
+            continue
+        out.append(line)
+
+    if microphone_enabled:
+        out.append("audiocapturemode:i:1")
+    if webcam_enabled:
+        out.append("camerastoredirect:s:*")
+
+    return out
+
+
+def prepare_rdp_file(
+    dest_path: str | Path,
+    microphone_enabled: bool = False,
+    webcam_enabled: bool = False,
+) -> str:
+    """Ensures the downloaded file is a valid, sanitized .rdp file for FreeRDP (Fail-Closed, Atomic).
+
+    microphone_enabled / webcam_enabled control local capture redirection. The
+    server-supplied values for these devices are always discarded and replaced
+    with the user's explicit choice.
+    """
     p = Path(dest_path).expanduser().resolve()
     if not p.is_file():
         raise FileNotFoundError(f"RDP file not found: {dest_path}")
@@ -152,6 +212,13 @@ def prepare_rdp_file(dest_path: str | Path) -> str:
             line for line in text.splitlines()
             if is_safe_rdp_directive(line)
         ]
+
+        # Apply the user's local device redirection choices
+        clean_lines = enforce_device_directives(
+            clean_lines,
+            microphone_enabled=microphone_enabled,
+            webcam_enabled=webcam_enabled,
+        )
 
         # Fail-closed: ensure file contains valid RDP directives
         valid_directives = [l for l in clean_lines if ":" in l and not l.strip().startswith(("#", ";"))]

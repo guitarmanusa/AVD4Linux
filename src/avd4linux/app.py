@@ -1,7 +1,6 @@
 """Adw.Application implementation for AVD4Linux."""
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 import shutil
@@ -9,11 +8,26 @@ import subprocess
 from pathlib import Path
 import sys
 
+from .cli import build_arg_parser
+
 logger = logging.getLogger(__name__)
 
 
+def in_flatpak() -> bool:
+    """Detects whether we are already running inside a Flatpak sandbox."""
+    return bool(os.environ.get("FLATPAK_ID")) or Path("/.flatpak-info").exists()
+
+
 def check_bwrap_sandbox() -> bool:
-    """Checks if Bubblewrap unprivileged user namespace creation is permitted by the host OS."""
+    """Checks if Bubblewrap unprivileged user namespace creation is permitted by the host OS.
+
+    Inside a Flatpak the process is already confined by an outer Bubblewrap
+    sandbox, and the runtime ships no bwrap binary, so a failed probe here means
+    "already sandboxed", not "broken". Treating it as a failure would block the
+    app from starting at all in the Flatpak build.
+    """
+    if in_flatpak():
+        return True
     bwrap = shutil.which("bwrap")
     if not bwrap:
         return False
@@ -127,33 +141,27 @@ class AVDApplication(Adw.Application):
 
     def do_command_line(self, command_line: Gio.ApplicationCommandLine) -> int:
         args = command_line.get_arguments()
-        parser = argparse.ArgumentParser(description="AVD4Linux — Azure Virtual Desktop Linux Client")
-        parser.add_argument(
-            "--cloud",
-            choices=["dod", "gcc", "commercial"],
-            default=self.initial_cloud,
-            help="Sovereign cloud environment to connect to",
-        )
-        parser.add_argument(
-            "--rdp",
-            help="Directly launch an .rdp file with FreeRDP and Smart Card redirection",
-        )
-        parser.add_argument(
-            "--disable-webkit-sandbox",
-            action="store_true",
-            help="Explicitly disable WebKit renderer process sandbox (for testing/restricted containers)",
-        )
+        parser = build_arg_parser(default_cloud=self.initial_cloud)
         parsed, _ = parser.parse_known_args(args[1:])
 
         if parsed.disable_webkit_sandbox:
             os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
             logger.warning("SECURITY WARNING: WebKit renderer sandbox disabled via --disable-webkit-sandbox flag.")
 
+        if parsed.verbose:
+            # The FreeRDP client's own stdout/stderr is forwarded from the PTY at DEBUG
+            # level, so this is what makes its WLOG output visible here.
+            logging.getLogger("avd4linux").setLevel(logging.DEBUG)
+            logger.debug("Verbose logging enabled (DEBUG)")
+
         self.initial_cloud = parsed.cloud
         self.activate()
 
         if self.window and parsed.cloud:
             self.window.set_cloud(parsed.cloud)
+
+        if self.window and (parsed.microphone is not None or parsed.webcam is not None):
+            self.window.set_device_redirect(microphone=parsed.microphone, webcam=parsed.webcam)
 
         if parsed.rdp and self.window:
             self.window._launch_freerdp(parsed.rdp)

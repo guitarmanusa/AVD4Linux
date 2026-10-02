@@ -5,6 +5,13 @@
   <project_license>Apache-2.0</project_license>
   <name>AVD4Linux</name>
   <summary>Native Linux client for Azure Virtual Desktop with Smart Card redirection</summary>
+
+  <developer id="org.avd4linux">
+    <name>AVD4Linux Project</name>
+  </developer>
+
+  <url type="homepage">https://github.com/guitarmanusa/AVD4Linux</url>
+  <url type="bugtracker">https://github.com/guitarmanusa/AVD4Linux/issues</url>
   
   <description>
     <p>
@@ -38,6 +45,17 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.9.1" date="2026-09-28">
+      <description>
+        <p>Added optional local device pass-through, disabled by default:</p>
+        <ul>
+          <li>Microphone pass-through (MS-RDPEAI) via a header bar toggle.</li>
+          <li>Webcam pass-through (MS-RDPECAM) via a header bar toggle, with a startup probe that detects FreeRDP builds lacking the rdpecam channel.</li>
+          <li>Settings persisted to ~/.config/avd4linux/settings.json with user-only permissions.</li>
+          <li>Microphone and camera directives supplied by a host pool are stripped and replaced with the user's local toggle state.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-09-24">
       <description>
         <p>Initial release of AVD4Linux with support for:</p>
