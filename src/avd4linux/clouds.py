@@ -110,20 +110,19 @@ def smartcard_flags(reader: str | None = None,
 
 def find_freerdp() -> str:
     """Locate the freerdp3 client binary."""
-    for p in ("xfreerdp3", "wlfreerdp3", "sdl-freerdp"):
+    from .session_manager import find_freerdp3
+
+    found = find_freerdp3()
+    if found:
+        return found
+    for p in ("wlfreerdp3", "sdl-freerdp"):
         import shutil
-        found = shutil.which(p)
-        if found:
-            return found
-    candidates = [
-        Path("/opt/freerdp3/usr/bin/xfreerdp3"),
-    ]
-    for c in candidates:
-        if c.exists():
-            return str(c)
+        located = shutil.which(p)
+        if located:
+            return located
     raise FileNotFoundError(
-        "freerdp3 client not found; install freerdp3-x11/wayland or use the "
-        "bundled binary"
+        "freerdp3 client not found; install freerdp3-x11/wayland or build the "
+        "custom webcam-capable client into /opt/freerdp3-cam"
     )
 
 

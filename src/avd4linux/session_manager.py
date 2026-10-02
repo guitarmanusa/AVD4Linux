@@ -3,30 +3,257 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
 
-FREERDP3_PATHS = [
-    "/opt/freerdp3/usr/bin/xfreerdp3",
+# Custom builds installed by this project (Ubuntu). These are compiled with
+# CHANNEL_RDPECAM_CLIENT=ON plus the FFmpeg/OpenH264/swscale stack and carry the
+# media_type_valid() patch, so they are the only builds that can redirect webcams.
+# They are probed for MS-RDPECAM support ahead of the stock locations below.
+CUSTOM_FREERDP3_PATHS = [
+    "/opt/freerdp3-cam/bin/xfreerdp3",
+    # Flatpak: the patched client we ship is installed into the app prefix.
+    "/app/bin/xfreerdp3",
+]
+
+# Stock/distribution builds, used as a fallback when no custom build is present.
+# Note: Ubuntu's freerdp3 packages omit CHANNEL_RDPECAM_CLIENT, so a session
+# launched from one of these will not be able to redirect a webcam.
+STANDARD_FREERDP3_PATHS = [
     "/usr/local/bin/xfreerdp3",
     "/usr/bin/xfreerdp3",
 ]
 
+FREERDP3_PATHS = CUSTOM_FREERDP3_PATHS + STANDARD_FREERDP3_PATHS
+
+# FreeRDP emits this literal warning from client/common/file.c when the client was
+# compiled without CHANNEL_RDPECAM_CLIENT, i.e. when MS-RDPECAM is unavailable.
+RDPECAM_UNSUPPORTED_MARKER = b"does not support [MS-RDPECAM]"
+
+# Audio backends FreeRDP understands for /sound and /microphone (MS-RDPEAI).
+AUDIO_BACKEND = "pulse"
+
+
+def _is_executable(path: str) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
 
 def find_freerdp3() -> Optional[str]:
-    """Locates the FreeRDP 3 executable."""
-    for p in FREERDP3_PATHS:
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
+    """Locates the FreeRDP 3 executable to launch sessions with.
+
+    Resolution order:
+
+    1. A custom build from CUSTOM_FREERDP3_PATHS that actually resolves its own
+       client libraries and reports MS-RDPECAM support. This is the only
+       combination that can redirect a webcam, so it wins outright.
+    2. Any other custom build from CUSTOM_FREERDP3_PATHS that runs, even without
+       MS-RDPECAM. Keeps a session possible if the custom prefix is misinstalled.
+    3. The stock locations in STANDARD_FREERDP3_PATHS, then ``PATH``.
+
+    Distro packages frequently link against a system libfreerdp-client3 that omits
+    the rdpecam channel, so step 1 verifies capability rather than trusting the path.
+    """
+    for path in CUSTOM_FREERDP3_PATHS:
+        if not _is_executable(path):
+            continue
+        if probe_camera_support(path).supported:
+            logger.info("Using custom FreeRDP build with MS-RDPECAM support: %s", path)
+            return path
+
+    for path in CUSTOM_FREERDP3_PATHS:
+        if _is_executable(path):
+            logger.info(
+                "Using custom FreeRDP build (no MS-RDPECAM support): %s", path
+            )
+            return path
+
+    for path in STANDARD_FREERDP3_PATHS:
+        if _is_executable(path):
+            logger.info("Using distribution FreeRDP build: %s", path)
+            return path
+
     found = shutil.which("xfreerdp3")
     if found:
+        logger.info("Using FreeRDP from PATH: %s", found)
         return found
     return None
+
+
+@dataclass
+class CameraSupport:
+    """Result of probing the local FreeRDP build for MS-RDPECAM camera redirection."""
+
+    supported: bool
+    detail: str
+
+
+def _read_client_libraries(executable: str) -> list[Path]:
+    """Resolves the shared libraries linked by the FreeRDP executable."""
+    libs: list[Path] = []
+    try:
+        res = subprocess.run(
+            ["ldd", executable], capture_output=True, text=True, timeout=5, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.debug("Could not run ldd on %s: %s", executable, e)
+        return libs
+
+    for line in res.stdout.splitlines():
+        m = re.search(r"=>\s*(/\S+)", line)
+        if not m:
+            continue
+        candidate = Path(m.group(1))
+        try:
+            libs.append(candidate.resolve())
+        except OSError:
+            continue
+    return libs
+
+
+def probe_camera_support(executable: Optional[str] = None) -> CameraSupport:
+    """Detects whether the local FreeRDP build supports MS-RDPECAM camera redirection.
+
+    The channel is compiled in when FreeRDP is configured with
+    CHANNEL_RDPECAM_CLIENT=ON, which on Linux additionally requires libv4l plus
+    the FFmpeg/swscale/OpenH264 stack (see README, "Webcam / MS-RDPECAM
+    Requirements"). When the channel is absent, the client library embeds the
+    "This build does not support [MS-RDPECAM]" warning, which is a reliable
+    negative marker that needs no live RDP connection.
+
+    Inspecting the resolved shared objects (via ldd) rather than the executable
+    path matters: a build without RUNPATH silently loads the distro's
+    libfreerdp-client3, so the capability has to be read from the library the
+    binary will actually dlopen.
+    """
+    exe = executable or find_freerdp3()
+    if not exe or not os.path.isfile(exe):
+        return CameraSupport(False, "FreeRDP 3 client not found")
+
+    libs = _read_client_libraries(exe)
+    if not libs:
+        return CameraSupport(
+            False,
+            "Could not inspect the FreeRDP client libraries, so MS-RDPECAM "
+            "support cannot be confirmed.",
+        )
+
+    for lib in libs:
+        try:
+            with open(lib, "rb") as f:
+                if RDPECAM_UNSUPPORTED_MARKER in f.read():
+                    return CameraSupport(
+                        False,
+                        "This FreeRDP build was compiled without MS-RDPECAM support. "
+                        "Rebuild FreeRDP with CHANNEL_RDPECAM_CLIENT=ON and libv4l "
+                        "to enable webcam redirection.",
+                    )
+        except OSError as e:
+            logger.debug("Could not inspect %s: %s", lib, e)
+
+    return CameraSupport(
+        True,
+        "MS-RDPECAM camera redirection is available in this FreeRDP build.",
+    )
+
+
+def has_local_camera() -> bool:
+    """Returns True when at least one Video4Linux capture device is present."""
+    try:
+        return any(Path("/dev").glob("video*"))
+    except OSError as e:
+        logger.debug("Could not enumerate /dev/video*: %s", e)
+        return False
+
+
+def has_local_microphone() -> bool:
+    """Returns True when the host has at least one ALSA capture device.
+
+    /proc/asound/cardN/pcmNc marks a capture stream ('c' = capture, 'p' =
+    playback). This inspects the kernel's device tree rather than the active
+    audio server, so the answer does not depend on whether a session is running.
+    """
+    try:
+        cards = sorted(Path("/proc/asound").glob("card[0-9]*"))
+    except OSError as e:
+        logger.debug("Could not enumerate /proc/asound: %s", e)
+        return False
+
+    for card in cards:
+        try:
+            if any(card.glob("pcm*c")):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def log_device_availability(
+    microphone_enabled: bool = False,
+    webcam_enabled: bool = False,
+) -> None:
+    """Logs an informational line for each redirectable device class on the host.
+
+    Emitted at startup so a user who cannot redirect a device can tell whether the
+    host lacks the hardware, the FreeRDP build lacks the channel, or both.
+    """
+    camera = has_local_camera()
+    microphone = has_local_microphone()
+
+    if not camera:
+        logger.info(
+            "No webcam detected on this host (no /dev/video* nodes). "
+            "Webcam redirection will be unavailable."
+        )
+    elif not webcam_enabled:
+        logger.info("Webcam detected on this host but redirection is turned off.")
+    else:
+        support = probe_camera_support(executable=find_freerdp3())
+        if support.supported:
+            logger.info("Webcam detected and will be redirected to the next session.")
+        else:
+            logger.info("Webcam detected, but the FreeRDP build cannot use it: %s", support.detail)
+
+    if not microphone:
+        logger.info(
+            "No microphone detected on this host (no ALSA capture devices). "
+            "Microphone redirection will be unavailable."
+        )
+    elif not microphone_enabled:
+        logger.info("Microphone detected on this host but redirection is turned off.")
+    else:
+        logger.info("Microphone detected and will be redirected to the next session.")
+
+
+def device_redirect_args(
+    microphone_enabled: bool = False,
+    webcam_enabled: bool = False,
+    sound_enabled: bool = True,
+) -> List[str]:
+    """Builds the FreeRDP CLI flags for optional local device redirection.
+
+    Microphone redirection uses the static MS-RDPEAI audin channel; FreeRDP
+    initialises it from /microphone and needs the audio subsystem active, so
+    /sound is emitted alongside it.
+
+    Webcam redirection uses the dynamic rdpecam channel (MS-RDPECAM), enabled
+    with /dvc:rdpecam. It is only effective on builds compiled with the
+    rdpecam channel; see probe_camera_support().
+    """
+    args: List[str] = []
+    if sound_enabled or microphone_enabled:
+        args.append(f"/sound:sys:{AUDIO_BACKEND}")
+    if microphone_enabled:
+        args.append(f"/microphone:sys:{AUDIO_BACKEND}")
+    if webcam_enabled:
+        args.append("/dvc:rdpecam")
+    return args
 
 
 def strip_ansi_codes(text: str) -> str:
@@ -66,7 +293,14 @@ class RDPSessionManager:
         self.on_cert_trust_needed: Optional[Callable[[dict[str, str], Callable[[str], None]], None]] = None
         self._cert_prompt_pending: bool = False
 
-    def build_rdp_file_args(self, rdp_path: str | Path, extra_args: Optional[List[str]] = None) -> List[str]:
+    def build_rdp_file_args(
+        self,
+        rdp_path: str | Path,
+        extra_args: Optional[List[str]] = None,
+        microphone_enabled: bool = False,
+        webcam_enabled: bool = False,
+        sound_enabled: bool = True,
+    ) -> List[str]:
         """Builds command line arguments to launch an .rdp file with smart card redirection."""
         if not self.executable:
             raise FileNotFoundError("xfreerdp3 not found on system")
@@ -85,6 +319,8 @@ class RDPSessionManager:
             "+fonts",
             "/gfx",
             "/rfx",
+            "/f",
+            "/floatbar",
         ]
 
         # Extract sovereign tenant and gateway host if present
@@ -123,6 +359,16 @@ class RDPSessionManager:
         if extra_args:
             args.extend(extra_args)
 
+        # Optional local device redirection; appended last so callers can
+        # override the defaults above via extra_args ordering.
+        args.extend(
+            device_redirect_args(
+                microphone_enabled=microphone_enabled,
+                webcam_enabled=webcam_enabled,
+                sound_enabled=sound_enabled,
+            )
+        )
+
         return args
 
     def feed_auth_url(self, redirect_url: str) -> None:
@@ -144,11 +390,20 @@ class RDPSessionManager:
         on_auth_url_needed: Optional[Callable[[str], None]] = None,
         on_cert_trust_needed: Optional[Callable[[dict[str, str], Callable[[str], None]], None]] = None,
         extra_args: Optional[List[str]] = None,
+        microphone_enabled: bool = False,
+        webcam_enabled: bool = False,
+        sound_enabled: bool = True,
     ) -> subprocess.Popen:
         """Launches FreeRDP 3 asynchronously using a pseudo-terminal with ECHO disabled."""
         import pty
         import termios
-        cmd = self.build_rdp_file_args(rdp_path, extra_args)
+        cmd = self.build_rdp_file_args(
+            rdp_path,
+            extra_args,
+            microphone_enabled=microphone_enabled,
+            webcam_enabled=webcam_enabled,
+            sound_enabled=sound_enabled,
+        )
         safe_cmd = [
             arg if not arg.startswith(("/azure:ad:", "/access-token:", "/gateway:"))
             else arg.split(":")[0] + ":***"

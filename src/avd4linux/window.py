@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import gi
 
@@ -14,7 +14,13 @@ from gi.repository import Adw, Gdk, GLib, Gtk
 
 from .browser import AVDBrowserView
 from .clouds import CLOUDS, CloudProfile, get_cloud
-from .session_manager import RDPSessionManager
+from .session_manager import (
+    RDPSessionManager,
+    has_local_camera,
+    log_device_availability,
+    probe_camera_support,
+)
+from .settings import Settings
 from .smartcard import SmartCardMonitor, SmartCardStatus
 
 logger = logging.getLogger(__name__)
@@ -107,6 +113,28 @@ class AVDMainWindow(Adw.ApplicationWindow):
 
         self.header_bar.pack_end(right_box)
 
+        # Local device redirection toggles (opt-in; applied to the next session)
+        self.settings = Settings.load()
+        self.camera_support = probe_camera_support(self.session_manager.executable)
+        self._suppress_cam_handler = False
+
+        device_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        device_box.add_css_class("linked")
+
+        self.btn_mic = Gtk.ToggleButton()
+        self.btn_mic.set_active(self.settings.microphone_enabled)
+        self._update_device_button(self.btn_mic, "microphone", self.settings.microphone_enabled)
+        self.btn_mic.connect("toggled", self._on_mic_toggled)
+
+        self.btn_cam = Gtk.ToggleButton()
+        self.btn_cam.set_active(self.settings.webcam_enabled)
+        self._update_device_button(self.btn_cam, "webcam", self.settings.webcam_enabled)
+        self.btn_cam.connect("toggled", self._on_cam_toggled)
+
+        device_box.append(self.btn_mic)
+        device_box.append(self.btn_cam)
+        self.header_bar.pack_end(device_box)
+
         # Toast Overlay
         self.toast_overlay = Adw.ToastOverlay()
         root_box.append(self.toast_overlay)
@@ -125,6 +153,13 @@ class AVDMainWindow(Adw.ApplicationWindow):
         # Start Smart Card status polling
         GLib.timeout_add_seconds(2, self._poll_smartcard)
         self._poll_smartcard()
+
+        # Report host device availability once at startup
+        self._smartcard_absence_logged = False
+        log_device_availability(
+            microphone_enabled=self.settings.microphone_enabled,
+            webcam_enabled=self.settings.webcam_enabled,
+        )
 
     def _load_current_cloud(self) -> None:
         profile = get_cloud(self.current_cloud_id)
@@ -151,6 +186,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
     def _poll_smartcard(self) -> bool:
         """Periodic background check for Smart Card."""
         status = self.smartcard_monitor.check_status()
+        self._log_smartcard_availability(status)
         if status.has_card:
             self.sc_icon.set_from_icon_name("security-high-symbolic")
             self.sc_icon.add_css_class("success")
@@ -171,10 +207,92 @@ class AVDMainWindow(Adw.ApplicationWindow):
             self.sc_button.set_tooltip_text(status.status_text)
         return True
 
+    def _log_smartcard_availability(self, status: SmartCardStatus) -> None:
+        """Logs the absence of a PC/SC reader once, rather than on every poll."""
+        if status.has_reader or self._smartcard_absence_logged:
+            return
+        self._smartcard_absence_logged = True
+        logger.info(
+            "No smart card reader detected on this host (%s). "
+            "Smart Card redirection (MS-RDPESC) will be unavailable.",
+            status.status_text,
+        )
+
     def show_toast(self, message: str, timeout: int = 4) -> None:
         toast = Adw.Toast.new(message)
         toast.set_timeout(timeout)
         self.toast_overlay.add_toast(toast)
+
+    def _update_device_button(self, button: Gtk.ToggleButton, device: str, active: bool) -> None:
+        """Applies the on/off icon and tooltip for a device redirection toggle."""
+        if device == "webcam":
+            name = "Webcam Pass-Through (MS-RDPECAM)"
+            on_icon = "camera-web-symbolic"
+            off_icon = "camera-disabled-symbolic"
+        else:
+            name = "Microphone Pass-Through (MS-RDPEAI)"
+            on_icon = "audio-input-microphone-symbolic"
+            off_icon = "microphone-disabled-symbolic"
+
+        state = "Enabled" if active else "Disabled"
+        icon = on_icon if active else off_icon
+        button.set_child(Gtk.Image.new_from_icon_name(icon))
+        button.set_tooltip_text(f"{name}: {state} (applies to the next session)")
+
+    def _session_is_active(self) -> bool:
+        proc = self.session_manager.active_process
+        return proc is not None and proc.poll() is None
+
+    def _on_mic_toggled(self, button: Gtk.ToggleButton) -> None:
+        active = button.get_active()
+        self.settings.microphone_enabled = active
+        self.settings.save()
+        self._update_device_button(button, "microphone", active)
+        if self._session_is_active():
+            self.show_toast("Microphone change applies to the next session.", timeout=3)
+        else:
+            self.show_toast(f"Microphone pass-through {'enabled' if active else 'disabled'}.")
+
+    def _on_cam_toggled(self, button: Gtk.ToggleButton) -> None:
+        # Reverting an unsupported webcam with set_active() re-enters this
+        # handler; the guarded pass only refreshes the button appearance.
+        if self._suppress_cam_handler:
+            self._suppress_cam_handler = False
+            self._update_device_button(button, "webcam", button.get_active())
+            return
+
+        active = button.get_active()
+
+        if active and not self.camera_support.supported:
+            self._suppress_cam_handler = True
+            button.set_active(False)
+            self.settings.webcam_enabled = False
+            self.settings.save()
+            self._update_device_button(button, "webcam", False)
+            self.show_toast("Webcam redirection unavailable in this FreeRDP build.", timeout=6)
+            logger.warning("Webcam toggle rejected: %s", self.camera_support.detail)
+            return
+
+        if active and not has_local_camera():
+            self.show_toast("Enabled, but no /dev/video* capture device was found.", timeout=5)
+
+        self.settings.webcam_enabled = active
+        self.settings.save()
+        self._update_device_button(button, "webcam", active)
+        if self._session_is_active():
+            self.show_toast("Webcam change applies to the next session.", timeout=3)
+        else:
+            self.show_toast(f"Webcam pass-through {'enabled' if active else 'disabled'}.")
+
+    def set_device_redirect(self, microphone: bool | None = None, webcam: bool | None = None) -> None:
+        """Applies device redirection overrides (used by CLI flags)."""
+        if microphone is not None:
+            self.settings.microphone_enabled = microphone
+            self.btn_mic.set_active(microphone)
+        if webcam is not None:
+            self.settings.webcam_enabled = webcam
+            self.btn_cam.set_active(webcam)
+        self.settings.save()
 
     def _on_rdp_downloaded(self, rdp_path: str) -> None:
         """Triggered automatically when AVD downloads an .rdp file."""
@@ -211,12 +329,24 @@ class AVDMainWindow(Adw.ApplicationWindow):
         """Launches FreeRDP 3 with smart card redirection after sanitizing directives."""
         from .browser import prepare_rdp_file
         try:
-            sanitized_path = prepare_rdp_file(rdp_path)
+            mic = self.settings.microphone_enabled
+            cam = self.settings.webcam_enabled
+            if cam and not self.camera_support.supported:
+                logger.warning("Launching without webcam redirection: %s", self.camera_support.detail)
+                cam = False
+            sanitized_path = prepare_rdp_file(
+                rdp_path,
+                microphone_enabled=mic,
+                webcam_enabled=cam,
+            )
             self.session_manager.launch_rdp_file(
                 sanitized_path,
                 on_exit=lambda rc: GLib.idle_add(self._on_session_exit, rc),
                 on_auth_url_needed=lambda url: GLib.idle_add(self._on_auth_url_needed, url),
                 on_cert_trust_needed=lambda info, cb: GLib.idle_add(self._on_cert_trust_needed, info, cb),
+                microphone_enabled=mic,
+                webcam_enabled=cam,
+                sound_enabled=self.settings.sound_enabled,
             )
         except Exception as e:
             self.show_toast(f"Failed to launch FreeRDP: {e}", timeout=6)
