@@ -7,7 +7,6 @@
 #define WEBKIT_CREDENTIAL_PERSISTENCE_FOR_SESSION 1
 
 typedef const char* (*fn_gtk_editable_get_text)(void *editable);
-typedef void (*fn_gtk_editable_delete_text)(void *editable, int start_pos, int end_pos);
 typedef void* (*fn_webkit_credential_new_for_certificate_pin)(const char *pin, int persistence);
 typedef void (*fn_webkit_authentication_request_authenticate)(void *request, void *credential);
 typedef void (*fn_webkit_authentication_request_cancel)(void *request);
@@ -72,8 +71,6 @@ static PyObject* py_authenticate_pin(PyObject *self, PyObject *args) {
     if (!p_gtk_editable_get_text) {
         p_gtk_editable_get_text = (fn_gtk_editable_get_text)dlsym(RTLD_DEFAULT, "gtk_entry_get_text");
     }
-    fn_gtk_editable_delete_text p_gtk_editable_delete_text =
-        (fn_gtk_editable_delete_text)dlsym(RTLD_DEFAULT, "gtk_editable_delete_text");
     fn_webkit_credential_new_for_certificate_pin p_webkit_credential_new_for_certificate_pin =
         (fn_webkit_credential_new_for_certificate_pin)dlsym(RTLD_DEFAULT, "webkit_credential_new_for_certificate_pin");
     fn_webkit_authentication_request_authenticate p_webkit_authentication_request_authenticate =
@@ -104,11 +101,6 @@ static PyObject* py_authenticate_pin(PyObject *self, PyObject *args) {
     }
     memcpy(pin_buf, raw_pin, pin_len);
     pin_buf[pin_len] = '\0';
-
-    /* Clear the entry widget in GTK */
-    if (p_gtk_editable_delete_text) {
-        p_gtk_editable_delete_text(entry_ptr, 0, -1);
-    }
 
     /* Pass C string directly to WebKit credential constructor with FOR_SESSION persistence */
     void *cred = p_webkit_credential_new_for_certificate_pin(pin_buf, WEBKIT_CREDENTIAL_PERSISTENCE_FOR_SESSION);

@@ -147,6 +147,10 @@ class AVDMainWindow(Adw.ApplicationWindow):
         )
         self.toast_overlay.set_child(self.browser)
 
+        # Warm PIV certificate in background thread so TLS client cert is ready instantly
+        from .smartcard import warm_piv_certificate_cache
+        warm_piv_certificate_cache()
+
         # Initial Load
         self._load_current_cloud()
 
