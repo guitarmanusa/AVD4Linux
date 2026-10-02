@@ -320,12 +320,13 @@ class RDPSessionManager:
             content = Path(rdp_path).read_text(encoding="utf-8", errors="replace")
             for line in content.splitlines():
                 line_s = line.strip()
-                if line_s.startswith("aadtenantid:s:"):
+                line_lower = line_s.lower()
+                if line_lower.startswith("aadtenantid:s:"):
                     tenant_id = line_s.split(":", 2)[2].strip()
-                elif line_s.startswith("gatewayhostname:s:"):
+                elif line_lower.startswith("gatewayhostname:s:"):
                     raw_gw = line_s.split(":", 2)[2].strip().lower()
                     gateway_host = raw_gw.split(":", 1)[0]
-                elif line_s.startswith("full address:s:"):
+                elif line_lower.startswith("full address:s:"):
                     raw_target = line_s.split(":", 2)[2].strip().lower()
                     target_host = raw_target.split(":", 1)[0]
         except Exception as e:
