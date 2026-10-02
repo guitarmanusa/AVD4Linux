@@ -8,21 +8,34 @@ import subprocess
 from pathlib import Path
 import sys
 
-# Force GnuTLS priority to TLS 1.2 with PKCS#1 v1.5 RSA signatures for DoD CAC / Smart Card hardware tokens.
-# PIV hardware tokens (DoD CAC) only support PKCS#1 v1.5 RSA on-chip signing (CKM_RSA_PKCS).
+# Force GnuTLS priority to TLS 1.2 with PKCS#1 v1.5 RSA-SHA256 signatures for DoD CAC / Smart Card hardware tokens.
 # Both TLS 1.3 and default TLS 1.2 negotiate RSA-PSS algorithms (RSA-PSS-RSAE-SHA256), which
-# the smart card chip rejects with CKR_KEY_HANDLE_INVALID / CKR_KEY_FUNCTION_NOT_PERMITTED
-# (causing GnuTLS to fail with "PKCS #11 error in key").
-# Explicitly disabling TLS 1.3 and all RSA-PSS variants forces GnuTLS to pick standard RSA-SHA256.
+# the smart card chip rejects with CKR_KEY_HANDLE_INVALID / CKR_KEY_FUNCTION_NOT_PERMITTED.
+# Disabling TLS 1.3, RSA-PSS, and AES-256-GCM forces GnuTLS to negotiate AES-128-GCM (SHA-256 PRF)
+# with standard PKCS#1 v1.5 RSA-SHA256 signatures.
 os.environ["G_TLS_GNUTLS_PRIORITY"] = (
     "NORMAL:%COMPAT:-VERS-TLS1.3:"
     "-SIGN-RSA-PSS-RSAE-SHA256:-SIGN-RSA-PSS-RSAE-SHA384:-SIGN-RSA-PSS-RSAE-SHA512:"
     "-SIGN-RSA-PSS-SHA256:-SIGN-RSA-PSS-SHA384:-SIGN-RSA-PSS-SHA512:"
-    "-AES-256-GCM:"
-    "-SIGN-RSA-SHA256:-SIGN-RSA-SHA384:-SIGN-RSA-SHA512"
+    "-AES-256-GCM"
 )
 os.environ.setdefault("GNUTLS_DEBUG_LEVEL", "4")
 os.environ.setdefault("OPENSC_CONF", "/app/etc/opensc.conf")
+
+# Initialize GnuTLS PKCS#11 subsystem directly with the native OpenSC provider
+# to bypass the p11-kit-client RPC proxy across the Flatpak sandbox boundary
+try:
+    import ctypes
+    _gnutls = ctypes.CDLL("libgnutls.so.30")
+    if hasattr(_gnutls, "gnutls_pkcs11_init") and hasattr(_gnutls, "gnutls_pkcs11_add_provider"):
+        _gnutls.gnutls_pkcs11_init.argtypes = [ctypes.c_uint, ctypes.c_char_p]
+        _gnutls.gnutls_pkcs11_init.restype = ctypes.c_int
+        _gnutls.gnutls_pkcs11_add_provider.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+        _gnutls.gnutls_pkcs11_add_provider.restype = ctypes.c_int
+        _gnutls.gnutls_pkcs11_init(0, None)
+        _ret = _gnutls.gnutls_pkcs11_add_provider(b"/app/lib/opensc-pkcs11.so", None)
+except Exception:
+    pass
 
 from .cli import build_arg_parser
 
