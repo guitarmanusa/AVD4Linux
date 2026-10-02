@@ -46,6 +46,7 @@ finish-args:
   # reject with "PKCS #11 error in key". Disabling RSA-PSS forces RSA-SHA256.
   - --env=G_TLS_GNUTLS_PRIORITY=NORMAL:%COMPAT:-VERS-TLS1.3:-SIGN-RSA-PSS-RSAE-SHA256:-SIGN-RSA-PSS-RSAE-SHA384:-SIGN-RSA-PSS-RSAE-SHA512:-SIGN-RSA-PSS-SHA256:-SIGN-RSA-PSS-SHA384:-SIGN-RSA-PSS-SHA512
   - --env=GNUTLS_DEBUG_LEVEL=4
+  - --env=OPENSC_CONF=/app/etc/opensc.conf
 
 modules:
   # 1. PC/SC Lite client library (to communicate with host pcscd socket)

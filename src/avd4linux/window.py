@@ -510,27 +510,21 @@ class AVDMainWindow(Adw.ApplicationWindow):
             def on_response(dlg, response):
                 try:
                     if response == "unlock":
-                        import gi
-                        gi.require_version("WebKit", "6.0")
-                        from gi.repository import WebKit
-                        pin = entry.get_text()
-                        if pin:
-                            logger.info("Submitting CAC PIN directly to WebKit (FOR_SESSION)")
-                            cred = WebKit.Credential.new_for_certificate_pin(
-                                pin, WebKit.CredentialPersistence.FOR_SESSION
-                            )
-                            del pin
-                            request.authenticate(cred)
+                        # C Extension Bridge: transfers PIN directly from GTK to WebKit in C memory.
+                        # Python never touches the string, preventing immutable allocation on the Python heap.
+                        from . import _pin_bridge
+                        handled = _pin_bridge.authenticate_pin(entry, request)
+                        if handled:
+                            logger.info("CAC PIN submitted directly via C Extension Bridge (Zero Python Heap Exposure)")
                         else:
                             request.cancel()
                     else:
                         request.cancel()
                 except Exception as e:
-                    logger.error("Error submitting PIN credential: %s", e)
+                    logger.error("Error submitting PIN credential via C Extension Bridge: %s", e)
                     request.cancel()
                 finally:
                     self._polling_paused = False
-                    entry.set_text("")
                     dlg.close()
 
             dialog.connect("response", on_response)

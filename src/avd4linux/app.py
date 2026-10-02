@@ -20,6 +20,7 @@ os.environ["G_TLS_GNUTLS_PRIORITY"] = (
     "-SIGN-RSA-PSS-SHA256:-SIGN-RSA-PSS-SHA384:-SIGN-RSA-PSS-SHA512"
 )
 os.environ.setdefault("GNUTLS_DEBUG_LEVEL", "4")
+os.environ.setdefault("OPENSC_CONF", "/app/etc/opensc.conf")
 
 from .cli import build_arg_parser
 
