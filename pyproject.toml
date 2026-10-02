@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "avd4linux"
-version = "0.2.0"
+version = "0.2.5"
 description = "AVD4Linux — Native Linux client for Azure Virtual Desktop with DoD CAC / Smart Card Redirection"
 readme = "README.md"
 requires-python = ">=3.10"

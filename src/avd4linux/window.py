@@ -352,52 +352,11 @@ class AVDMainWindow(Adw.ApplicationWindow):
             self.show_toast(f"Failed to launch FreeRDP: {e}", timeout=6)
 
     def _on_cert_trust_needed(self, cert_info: dict[str, str], response_cb: Callable[[str], None]) -> None:
-        """Presents an interactive modal dialog showing certificate details before accepting."""
-        host = GLib.markup_escape_text(cert_info.get("host", "Remote Gateway"))
-        fingerprint = GLib.markup_escape_text(cert_info.get("fingerprint", "Unknown"))
-        subject = GLib.markup_escape_text(cert_info.get("subject", ""))
-        issuer = GLib.markup_escape_text(cert_info.get("issuer", ""))
-
-        body_lines = [
-            f"FreeRDP received an untrusted server certificate for:\n<b>{host}</b>\n",
-        ]
-        if subject:
-            body_lines.append(f"<b>Subject:</b> {subject}")
-        if issuer:
-            body_lines.append(f"<b>Issuer:</b> {issuer}")
-        if fingerprint:
-            body_lines.append(f"<b>SHA-256 Fingerprint:</b>\n<tt>{fingerprint}</tt>\n")
-        body_lines.append("Do you trust this certificate to establish the remote desktop session?")
-
-        dialog = Adw.MessageDialog(
-            transient_for=self,
-            heading="Untrusted Server Certificate",
-            body="\n".join(body_lines),
-        )
-        dialog.set_body_use_markup(True)
-        dialog.add_response("reject", "Reject & Disconnect")
-        dialog.add_response("trust_once", "Trust Once")
-        dialog.add_response("trust_always", "Trust Always")
-        dialog.set_response_appearance("reject", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_response_appearance("trust_always", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response("reject")
-        dialog.set_close_response("reject")
-
-        def on_response(dlg, response):
-            if response == "trust_always":
-                logger.info("User chose to permanently trust certificate for %s", host)
-                response_cb("T")
-            elif response == "trust_once":
-                logger.info("User chose to trust certificate once for %s", host)
-                response_cb("Y")
-            else:
-                logger.warning("User rejected certificate for %s; disconnecting session", host)
-                response_cb("N")
-                self.session_manager.terminate_session()
-                self.show_toast(f"Connection to {host} rejected (untrusted certificate).", timeout=4)
-
-        dialog.connect("response", on_response)
-        dialog.present()
+        """Notifies the user that a session was aborted due to an untrusted server TLS certificate."""
+        host = cert_info.get("host", "Remote Gateway")
+        fingerprint = cert_info.get("fingerprint", "Unknown")
+        logger.error("TLS Certificate Validation Error: Aborted connection to %s (SHA-256 fingerprint: %s)", host, fingerprint)
+        self.show_toast(f"Security Alert: Session aborted due to untrusted TLS certificate for {host}.", timeout=6)
 
     def _on_auth_url_needed(self, auth_url: str) -> None:
         """Handles FreeRDP's AAD OAuth authorization challenge using the active WebKit session."""
@@ -445,7 +404,10 @@ class AVDMainWindow(Adw.ApplicationWindow):
             if handled:
                 return
             handled = True
-            logger.info("Captured OAuth redirect code for FreeRDP: %s", uri[:80])
+            import urllib.parse
+            p_auth = urllib.parse.urlparse(uri)
+            clean_log_uri = f"{p_auth.scheme}://{p_auth.netloc}{p_auth.path} [code captured]"
+            logger.info("Captured OAuth redirect code for FreeRDP: %s", clean_log_uri)
             self.session_manager.feed_auth_url(uri)
             self.show_toast("Opening remote desktop session...", timeout=4)
             GLib.idle_add(auth_win.close)
@@ -454,11 +416,8 @@ class AVDMainWindow(Adw.ApplicationWindow):
             if decision_type == WebKit.PolicyDecisionType.NAVIGATION_ACTION:
                 action = decision.get_navigation_action()
                 uri = action.get_request().get_uri() or ""
-                if "nativeclient" in uri and "code=" in uri:
-                    decision.ignore()
-                    complete_auth(uri)
-                    return True
 
+                # Perform strict domain verification FIRST before checking for code/redirect URIs
                 parsed = urllib.parse.urlparse(uri)
                 if parsed.scheme in ("http", "https"):
                     hostname = (parsed.hostname or "").lower()
@@ -479,6 +438,12 @@ class AVDMainWindow(Adw.ApplicationWindow):
                 else:
                     logger.warning("Security violation in auth window: Blocked navigation to unauthorized scheme: %s", parsed.scheme)
                     decision.ignore()
+                    return True
+
+                # ONLY process authorization codes from verified authentication domains
+                if "nativeclient" in uri and "code=" in uri:
+                    decision.ignore()
+                    complete_auth(uri)
                     return True
             return False
 
@@ -539,24 +504,19 @@ class AVDMainWindow(Adw.ApplicationWindow):
 
             def on_response(dlg, response):
                 try:
-                    import gi
-                    gi.require_version("WebKit", "6.0")
-                    from gi.repository import WebKit
                     if response == "unlock":
-                        pin = entry.get_text()
-                        if pin:
-                            logger.info("Submitting CAC PIN directly to WebKit (FOR_SESSION)")
-                            cred = WebKit.Credential.new_for_certificate_pin(
-                                pin, WebKit.CredentialPersistence.FOR_SESSION
-                            )
-                            del pin
-                            request.authenticate(cred)
+                        # C Extension Bridge: transfers PIN directly from GTK to WebKit in C memory.
+                        # Python never touches the string, preventing immutable allocation on the Python heap.
+                        from . import _pin_bridge
+                        handled = _pin_bridge.authenticate_pin(entry, request)
+                        if handled:
+                            logger.info("CAC PIN submitted directly via C Extension Bridge (Zero Python Heap Exposure)")
                         else:
                             request.cancel()
                     else:
                         request.cancel()
                 except Exception as e:
-                    logger.error("Error submitting PIN credential: %s", e)
+                    logger.error("Error submitting PIN credential via C Extension Bridge: %s", e)
                     request.cancel()
                 finally:
                     entry.set_text("")

@@ -366,9 +366,35 @@ class TestSecurityGuards(unittest.TestCase):
         )
         args = mgr.build_rdp_file_args(rdp_path)
 
-        # Must route to login.microsoftonline.us authority
-        self.assertTrue(any(a.startswith("/azure:ad:login.microsoftonline.us") for a in args))
+        # Must route to login.microsoftonline.us authority AND avd-access redirect URI
+        aad_flag = [a for a in args if a.startswith("/azure:ad:")][0]
+        self.assertIn("login.microsoftonline.us", aad_flag)
+        self.assertIn("avd-access:https://login.microsoftonline.us/common/oauth2/nativeclient", aad_flag)
         self.assertIn("/smartcard", args)
+
+    def test_piv_certificate_selection_without_fallback(self):
+        from avd4linux import smartcard
+        fake_output = (
+            "URL: pkcs11:model=PKCS%2315%20emulated;type=cert;id=%02\n"
+            "Label: Certificate for Email Signing\n"
+            "URL: pkcs11:model=PKCS%2315%20emulated;type=cert;id=%03\n"
+            "Label: Certificate for Key Encipherment\n"
+        )
+        res = mock.MagicMock()
+        res.stdout = fake_output
+        with mock.patch("shutil.which", return_value="/usr/bin/p11tool"), \
+             mock.patch("subprocess.run", return_value=res):
+            cert_uri = smartcard.get_piv_certificate_uri()
+            self.assertIsNone(cert_uri)
+
+    def test_pty_monitor_token_masking_json_and_headers(self):
+        import re
+        pattern = r"(?i)\b(code|token|bearer|access_token|refresh_token|id_token)\b\s*[\":=\s%]"
+        
+        self.assertTrue(bool(re.search(pattern, 'code=secret_value_123')))
+        self.assertTrue(bool(re.search(pattern, 'code%3Dsecret_value_123')))
+        self.assertTrue(bool(re.search(pattern, '"access_token": "eyJhbGci..."')))
+        self.assertTrue(bool(re.search(pattern, 'Authorization: Bearer eyJhbGci...')))
 
     def test_allowed_navigation_domains_whitelist(self):
         from avd4linux.browser import ALLOWED_NAVIGATION_DOMAINS
@@ -389,3 +415,9 @@ class TestSecurityGuards(unittest.TestCase):
         self.assertFalse(is_allowed("attacker.azure.com"))
         self.assertFalse(is_allowed("attacker.windows.net"))
         self.assertFalse(is_allowed("malicious.com"))
+
+    def test_c_pin_bridge_presence_and_validation(self):
+        from avd4linux import _pin_bridge
+        self.assertTrue(callable(_pin_bridge.authenticate_pin))
+        with self.assertRaises(ValueError):
+            _pin_bridge.authenticate_pin(None, None)

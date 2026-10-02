@@ -100,7 +100,7 @@ class TestEnforceDeviceDirectives(unittest.TestCase):
 class TestPrepareRdpFile(unittest.TestCase):
     def _write(self, d, text):
         src = Path(d) / "in.rdp"
-        src.write_text(text, encoding="utf-8")
+        src.write_bytes(text.encode("utf-8"))
         return src
 
     def test_enabled_devices_land_in_output_file(self):
@@ -118,6 +118,14 @@ class TestPrepareRdpFile(unittest.TestCase):
             text = out.read_text(encoding="utf-8")
             self.assertNotIn("camerastoredirect", text)
             self.assertNotIn("audiocapturemode", text)
+
+    def test_original_file_is_not_overwritten_in_place(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = self._write(d, BASE_RDP)
+            out = Path(prepare_rdp_file(src, microphone_enabled=True))
+            # The returned sanitized file must be distinct from source
+            self.assertNotEqual(out, src)
+            self.assertEqual(src.read_bytes(), BASE_RDP.encode("utf-8"))
 
     def test_output_permissions_are_user_only(self):
         import stat as _stat

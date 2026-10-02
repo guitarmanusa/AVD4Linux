@@ -38,7 +38,6 @@ ALLOWED_NAVIGATION_DOMAINS = (
     "account.activedirectory.windowsazure.com",
     "wvd.microsoft.com",
     "wvd.azure.us",
-    "wvd.azure.cn",
 )
 
 ALLOWED_MTLS_DOMAINS = (
@@ -228,22 +227,26 @@ def prepare_rdp_file(
 
         text = "\r\n".join(clean_lines) + "\r\n"
 
-        # Atomic write via temporary file in DOWNLOADS_DIR to prevent race conditions / symlink replacement
-        fd, tmp_swap = tempfile.mkstemp(dir=str(DOWNLOADS_DIR), suffix=".tmp")
+        # Write sanitized output strictly into secure DOWNLOADS_DIR (0o700) with 0o600 permissions
+        # to prevent overwriting the user's original source file in-place
+        fd, sanitized_path = tempfile.mkstemp(
+            dir=str(DOWNLOADS_DIR),
+            prefix=f"{p.stem}_sanitized_",
+            suffix=".rdp",
+        )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f_tmp:
-                f_tmp.write(text)
-            os.chmod(tmp_swap, stat.S_IRUSR | stat.S_IWUSR)
-            os.replace(tmp_swap, rdp_out)
-        finally:
-            if os.path.exists(tmp_swap):
+            with os.fdopen(fd, "w", encoding="utf-8") as f_out:
+                f_out.write(text)
+            os.chmod(sanitized_path, stat.S_IRUSR | stat.S_IWUSR)
+            logger.info("Prepared sanitized RDP file for FreeRDP: %s", sanitized_path)
+            return sanitized_path
+        except Exception:
+            if os.path.exists(sanitized_path):
                 try:
-                    os.unlink(tmp_swap)
+                    os.unlink(sanitized_path)
                 except Exception:
                     pass
-
-        logger.info("Prepared sanitized RDP file for FreeRDP: %s", rdp_out)
-        return str(rdp_out)
+            raise
     except Exception as e:
         logger.error("Security/Sanitization Error: Failed to process RDP file %s: %s", dest_path, e)
         # Fail closed: never return the raw or unsanitized file path
@@ -473,26 +476,29 @@ class AVDBrowserView(Gtk.Box):
         DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
         os.chmod(DOWNLOADS_DIR, stat.S_IRWXU)
 
-        # Non-destructive collision handling: do not overwrite existing files
-        dest_file = DOWNLOADS_DIR / safe_filename
-        if dest_file.is_symlink():
-            dest_file.unlink()
+        # Atomically reserve a unique file using O_CREAT | O_EXCL to eliminate TOCTOU race conditions
+        stem = Path(safe_filename).stem or "session"
+        suffix = Path(safe_filename).suffix or ".rdp"
 
-        stem = dest_file.stem
-        suffix = dest_file.suffix
-        counter = 1
-        while dest_file.exists() or dest_file.is_symlink():
-            if dest_file.is_symlink():
-                dest_file.unlink()
+        counter = 0
+        dest_file = None
+        while True:
+            candidate_name = f"{stem}{f'_{counter}' if counter > 0 else ''}{suffix}"
+            candidate_path = DOWNLOADS_DIR / candidate_name
+            try:
+                # O_CREAT | O_EXCL is an atomic kernel operation that fails if the file exists
+                fd = os.open(str(candidate_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.close(fd)
+                dest_file = candidate_path
                 break
-            dest_file = DOWNLOADS_DIR / f"{stem}_{counter}{suffix}"
-            counter += 1
+            except FileExistsError:
+                counter += 1
 
         dest = str(dest_file)
         logger.info("Saving downloaded file to: %s", dest)
         # WebKit requires an absolute filesystem path, NOT a URI
         download.set_destination(dest)
-        download.set_allow_overwrite(False)
+        download.set_allow_overwrite(True)
         return True
 
     def _on_download_finished(self, download: WebKit.Download) -> None:

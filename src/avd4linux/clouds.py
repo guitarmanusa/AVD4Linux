@@ -66,22 +66,16 @@ KEYS: tuple[str, ...] = tuple(CLOUDS)
 
 # Trusted Microsoft AVD gateway and target host domain suffixes.
 # Used to validate hosts before routing Entra ID tokens or exposing Smart Card hardware.
-# Generic multi-tenant cloud domains (e.g. azure.com, cloudapp.net) are excluded
-# to prevent rogue Azure VM/AppService hosts from being treated as trusted gateways.
+# Broad root domains (e.g. microsoft.com) are excluded to prevent subdomains
+# on shared Azure AppServices or storage blobs from being treated as trusted gateways.
 TRUSTED_AVD_DOMAINS: tuple[str, ...] = (
     "wvd.microsoft.com",
     "rds.microsoft.com",
-    "microsoft.com",
-    "microsoftonline.com",
     "wvd.azure.us",
-    "microsoftonline.us",
-    "wvd.azure.cn",
-    "microsoftonline.cn",
 )
 
 USGOV_AVD_DOMAINS: tuple[str, ...] = (
     "wvd.azure.us",
-    "microsoftonline.us",
 )
 
 
