@@ -167,6 +167,16 @@ def get_piv_tls_certificate():
     # Directly instantiates GTlsCertificate via GnuTLS in <50ms without blocking the GTK UI loop
     try:
         cert = Gio.TlsCertificate.new_from_pkcs11_uris(
+            "pkcs11:model=PKCS%2315%20emulated;id=%01;type=cert",
+            "pkcs11:model=PKCS%2315%20emulated;id=%01;type=private",
+        )
+        if cert:
+            return cert
+    except Exception as e:
+        logger.debug("Direct PIV URI load with model not available: %s", e)
+
+    try:
+        cert = Gio.TlsCertificate.new_from_pkcs11_uris(
             "pkcs11:id=%01;type=cert", "pkcs11:id=%01;type=private"
         )
         if cert:

@@ -8,6 +8,12 @@ import subprocess
 from pathlib import Path
 import sys
 
+# Force GnuTLS priority to TLS 1.2 for Smart Card / CAC PKCS#11 authentication.
+# PIV hardware tokens (DoD CAC) only support PKCS#1 v1.5 RSA signatures (CKM_RSA_PKCS).
+# TLS 1.3 mandates RSA-PSS, which PIV hardware tokens reject with CKR_KEY_FUNCTION_NOT_PERMITTED
+# (causing GnuTLS to fail with "PKCS #11 error in key").
+os.environ.setdefault("G_TLS_GNUTLS_PRIORITY", "NORMAL:%COMPAT:-VERS-TLS1.3")
+
 from .cli import build_arg_parser
 
 logger = logging.getLogger(__name__)
