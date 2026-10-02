@@ -7,10 +7,13 @@
 #define WEBKIT_CREDENTIAL_PERSISTENCE_FOR_SESSION 1
 
 typedef const char* (*fn_gtk_editable_get_text)(void *editable);
+typedef void* (*fn_g_tls_certificate_new_from_pkcs11_uris)(const char *cert_uri, const char *key_uri, void *error);
+typedef void* (*fn_webkit_credential_new_for_certificate)(void *certificate, int persistence);
 typedef void* (*fn_webkit_credential_new_for_certificate_pin)(const char *pin, int persistence);
 typedef void (*fn_webkit_authentication_request_authenticate)(void *request, void *credential);
 typedef void (*fn_webkit_authentication_request_cancel)(void *request);
 typedef void (*fn_webkit_credential_free)(void *credential);
+typedef void (*fn_g_object_unref)(void *object);
 typedef void (*fn_openssl_cleanse)(void *ptr, size_t len);
 
 static void secure_cleanse(void *v, size_t n) {
@@ -53,8 +56,10 @@ static void* extract_gpointer(PyObject *obj) {
 static PyObject* py_authenticate_pin(PyObject *self, PyObject *args) {
     PyObject *entry_obj = NULL;
     PyObject *request_obj = NULL;
+    const char *cert_uri = NULL;
+    const char *key_uri = NULL;
 
-    if (!PyArg_ParseTuple(args, "OO", &entry_obj, &request_obj)) {
+    if (!PyArg_ParseTuple(args, "OO|zz", &entry_obj, &request_obj, &cert_uri, &key_uri)) {
         return NULL;
     }
 
@@ -66,12 +71,16 @@ static PyObject* py_authenticate_pin(PyObject *self, PyObject *args) {
         return NULL;
     }
 
-    /* Resolve runtime symbols from already-loaded GTK4/3 and WebKitGTK libraries */
+    /* Resolve runtime symbols from already-loaded GTK4/3, GIO and WebKitGTK libraries */
     fn_gtk_editable_get_text p_gtk_editable_get_text =
         (fn_gtk_editable_get_text)dlsym(RTLD_DEFAULT, "gtk_editable_get_text");
     if (!p_gtk_editable_get_text) {
         p_gtk_editable_get_text = (fn_gtk_editable_get_text)dlsym(RTLD_DEFAULT, "gtk_entry_get_text");
     }
+    fn_g_tls_certificate_new_from_pkcs11_uris p_g_tls_certificate_new_from_pkcs11_uris =
+        (fn_g_tls_certificate_new_from_pkcs11_uris)dlsym(RTLD_DEFAULT, "g_tls_certificate_new_from_pkcs11_uris");
+    fn_webkit_credential_new_for_certificate p_webkit_credential_new_for_certificate =
+        (fn_webkit_credential_new_for_certificate)dlsym(RTLD_DEFAULT, "webkit_credential_new_for_certificate");
     fn_webkit_credential_new_for_certificate_pin p_webkit_credential_new_for_certificate_pin =
         (fn_webkit_credential_new_for_certificate_pin)dlsym(RTLD_DEFAULT, "webkit_credential_new_for_certificate_pin");
     fn_webkit_authentication_request_authenticate p_webkit_authentication_request_authenticate =
@@ -80,9 +89,10 @@ static PyObject* py_authenticate_pin(PyObject *self, PyObject *args) {
         (fn_webkit_authentication_request_cancel)dlsym(RTLD_DEFAULT, "webkit_authentication_request_cancel");
     fn_webkit_credential_free p_webkit_credential_free =
         (fn_webkit_credential_free)dlsym(RTLD_DEFAULT, "webkit_credential_free");
+    fn_g_object_unref p_g_object_unref =
+        (fn_g_object_unref)dlsym(RTLD_DEFAULT, "g_object_unref");
 
-    if (!p_gtk_editable_get_text || !p_webkit_credential_new_for_certificate_pin ||
-        !p_webkit_authentication_request_authenticate) {
+    if (!p_gtk_editable_get_text || !p_webkit_authentication_request_authenticate) {
         PyErr_SetString(PyExc_RuntimeError, "Could not resolve GTK4 or WebKitGTK symbols from process");
         return NULL;
     }
@@ -105,10 +115,35 @@ static PyObject* py_authenticate_pin(PyObject *self, PyObject *args) {
     memcpy(pin_buf, raw_pin, pin_len);
     pin_buf[pin_len] = '\0';
 
-    /* Pass C string directly to WebKit credential constructor with FOR_SESSION persistence */
-    void *cred = p_webkit_credential_new_for_certificate_pin(pin_buf, WEBKIT_CREDENTIAL_PERSISTENCE_FOR_SESSION);
+    void *cred = NULL;
 
-    /* Cryptographically erase the stack buffer immediately */
+    /* If cert_uri and key_uri are available, embed pin-value into the key URI directly in C memory.
+     * This ensures GnuTLS imports the private key already unlocked, avoiding key handle (0x0)
+     * invalidation issues during client certificate signature verification. */
+    if (cert_uri && cert_uri[0] != '\0' && key_uri && key_uri[0] != '\0' &&
+        p_g_tls_certificate_new_from_pkcs11_uris && p_webkit_credential_new_for_certificate) {
+        char full_key_uri[1024];
+        snprintf(full_key_uri, sizeof(full_key_uri), "%s;pin-value=%s", key_uri, pin_buf);
+
+        void *tls_cert = p_g_tls_certificate_new_from_pkcs11_uris(cert_uri, full_key_uri, NULL);
+        secure_cleanse(full_key_uri, sizeof(full_key_uri));
+
+        if (tls_cert) {
+            fprintf(stderr, "[PIN_BRIDGE] Bound PIN directly to PKCS#11 key URI in C memory (Zero Python Heap Exposure)\n");
+            cred = p_webkit_credential_new_for_certificate(tls_cert, WEBKIT_CREDENTIAL_PERSISTENCE_FOR_SESSION);
+            if (p_g_object_unref) {
+                p_g_object_unref(tls_cert);
+            }
+        }
+    }
+
+    /* Fallback: standard certificate pin credential */
+    if (!cred && p_webkit_credential_new_for_certificate_pin) {
+        fprintf(stderr, "[PIN_BRIDGE] Submitting WebKit credential for certificate pin (PIN length: %zu)\n", pin_len);
+        cred = p_webkit_credential_new_for_certificate_pin(pin_buf, WEBKIT_CREDENTIAL_PERSISTENCE_FOR_SESSION);
+    }
+
+    /* Cryptographically erase the PIN stack buffer immediately */
     secure_cleanse(pin_buf, sizeof(pin_buf));
 
     if (!cred) {
@@ -117,8 +152,6 @@ static PyObject* py_authenticate_pin(PyObject *self, PyObject *args) {
         }
         Py_RETURN_FALSE;
     }
-
-    fprintf(stderr, "[PIN_BRIDGE] Submitting WebKit credential (PIN length: %zu)\n", pin_len);
 
     /* Submit credential to WebKit authentication request (WebKit manages credential lifecycle) */
     p_webkit_authentication_request_authenticate(request_ptr, cred);

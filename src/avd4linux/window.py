@@ -479,7 +479,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
         else:
             self.show_toast(f"FreeRDP session ended (exit code: {exit_code}).")
 
-    def _on_pin_requested(self, request) -> bool:
+    def _on_pin_requested(self, request, cert_uri: Optional[str] = None, key_uri: Optional[str] = None) -> bool:
         """Prompts for the CAC PIN and submits it directly to WebKit with zero caching."""
         try:
             # Pause PC/SC background polling during PIN authentication so reader transactions
@@ -513,7 +513,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
                         # C Extension Bridge: transfers PIN directly from GTK to WebKit in C memory.
                         # Python never touches the string, preventing immutable allocation on the Python heap.
                         from . import _pin_bridge
-                        handled = _pin_bridge.authenticate_pin(entry, request)
+                        handled = _pin_bridge.authenticate_pin(entry, request, cert_uri, key_uri)
                         if handled:
                             logger.info("CAC PIN submitted directly via C Extension Bridge (Zero Python Heap Exposure)")
                         else:

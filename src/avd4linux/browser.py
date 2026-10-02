@@ -387,7 +387,10 @@ class AVDBrowserView(Gtk.Box):
         elif scheme == WebKit.AuthenticationScheme.CLIENT_CERTIFICATE_PIN_REQUESTED:
             logger.info("Smart card PIN requested for host: %s, flags: %s", host, request.get_certificate_pin_flags())
             if self.on_pin_requested:
-                return self.on_pin_requested(request)
+                from .smartcard import get_piv_certificate_uri, get_piv_private_key_uri
+                cert_uri = get_piv_certificate_uri()
+                key_uri = get_piv_private_key_uri(cert_uri) if cert_uri else None
+                return self.on_pin_requested(request, cert_uri=cert_uri, key_uri=key_uri)
             return False
 
         return False
