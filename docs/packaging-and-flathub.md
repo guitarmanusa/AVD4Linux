@@ -85,7 +85,7 @@ Copy the following files into the branch root:
 
 This repository includes a GitHub Actions workflow at `.github/workflows/flatpak.yml`:
 - On every push and pull request, GitHub Actions compiles the Flatpak and validates AppStream metadata.
-- When you push a git release tag (e.g. `git tag v0.9.0 && git push origin v0.9.0`), GitHub Actions automatically builds `org.avd4linux.AVD4Linux.flatpak` and attaches the binary to your GitHub Release!
+- When you push a git release tag (e.g. `git tag 0.2.0 && git push origin 0.2.0`), GitHub Actions automatically builds `org.avd4linux.AVD4Linux.flatpak` and attaches the binary to your GitHub Release!
 
 ## 5. Keeping Dependencies Up To Date
 

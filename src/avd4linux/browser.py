@@ -284,7 +284,7 @@ class AVDBrowserView(Gtk.Box):
         # Modern Chrome/Edge user agent with AVD4Linux client identifier
         ua = (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0 AVD4Linux/0.9.0"
+            "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0 AVD4Linux/0.2.0"
         )
         settings.set_user_agent(ua)
 
