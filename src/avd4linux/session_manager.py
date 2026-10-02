@@ -369,7 +369,7 @@ class RDPSessionManager:
                 args.append(
                     f"/azure:ad:{authority},use-tenantid:on,tenantid:{tenant_id},"
                     f"avd-scope:{scope},"
-                    f"avd-access:https://login.microsoftonline.com/common/oauth2/nativeclient"
+                    f"avd-access:https://{authority}/common/oauth2/nativeclient"
                 )
             else:
                 logger.warning(
@@ -437,6 +437,10 @@ class RDPSessionManager:
         logger.info("Launching FreeRDP 3: %s", " ".join(safe_cmd))
 
         env = dict(os.environ)
+        # Force C/English locale so FreeRDP emits deterministic terminal strings
+        # regardless of host OS localization (e.g. LANG=fr_FR.UTF-8)
+        env["LC_ALL"] = "C"
+        env["LANG"] = "C"
         if "DISPLAY" not in env:
             env["DISPLAY"] = ":0"
         if "WAYLAND_DISPLAY" not in env:
@@ -487,8 +491,8 @@ class RDPSessionManager:
                 for line in text.splitlines():
                     line_clean = line.strip()
                     if line_clean:
-                        # Mask any lines that might contain OAuth authorization codes or tokens (including URL-encoded %3D)
-                        if re.search(r"(?i)(code|token|bearer|access_token|refresh_token|id_token)(?:=|%3D)", line_clean):
+                        # Mask any lines that might contain OAuth authorization codes, tokens, or headers (including JSON / URL-encoding)
+                        if re.search(r"(?i)\b(code|token|bearer|access_token|refresh_token|id_token)\b\s*[\":=\s%]", line_clean):
                             logger.debug("[FreeRDP] [sensitive data masked]")
                         else:
                             logger.debug("[FreeRDP] %s", line_clean)
@@ -496,28 +500,26 @@ class RDPSessionManager:
                 if any(prompt in buf for prompt in ["(Y/T/N)", "(y/t/n)", "Do you trust the above certificate"]) and not self._cert_prompt_pending:
                     self._cert_prompt_pending = True
                     cert_info = parse_cert_trust_prompt(buf)
-                    logger.warning(
-                        "FreeRDP received untrusted TLS certificate challenge for host: %s (fingerprint: %s)",
+                    logger.error(
+                        "SECURITY VIOLATION: Rejecting untrusted TLS certificate challenge for host: %s (fingerprint: %s). Session aborted.",
                         cert_info.get("host"),
                         cert_info.get("fingerprint"),
                     )
 
-                    def respond_cert(choice: str) -> None:
-                        try:
-                            val = (choice.strip()[:1].upper() or "N") + "\n"
-                            os.write(master_fd, val.encode())
-                        except Exception as e:
-                            logger.error("Failed to write certificate trust response to PTY: %s", e)
-                        finally:
-                            self._cert_prompt_pending = False
+                    # Fail closed: reject untrusted certificate automatically to prevent MitM attacks
+                    try:
+                        os.write(master_fd, b"N\n")
+                    except Exception as e:
+                        logger.error("Failed to write certificate rejection to PTY: %s", e)
 
                     if self.on_cert_trust_needed:
-                        self.on_cert_trust_needed(cert_info, respond_cert)
-                    else:
-                        logger.error("No certificate trust handler configured; rejecting untrusted certificate by default")
-                        respond_cert("N")
-                        self._cert_prompt_pending = False
-                        self.terminate_session()
+                        try:
+                            self.on_cert_trust_needed(cert_info, lambda *_: None)
+                        except Exception as e:
+                            logger.error("Error invoking cert_trust handler: %s", e)
+
+                    self._cert_prompt_pending = False
+                    self.terminate_session()
                     buf = ""
 
                 if "Browse to:" in buf and "Paste redirect URL here:" in buf:

@@ -143,8 +143,6 @@ def get_piv_certificate_uri() -> Optional[str]:
                 elif "Certificate for PIV Authentication" in line or "ID: 01" in line:
                     if current_url:
                         return current_url
-            if current_url:
-                return current_url
         except Exception as e:
             logger.error("Error finding PIV certificate URI: %s", e)
     return None
