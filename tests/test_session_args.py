@@ -261,7 +261,10 @@ class TestSecurityGuards(unittest.TestCase):
         self.assertTrue(is_trusted_avd_host("g-us-1.wvd.microsoft.com"))
         self.assertTrue(is_trusted_avd_host("g-us-1.wvd.microsoft.com:443"))
         self.assertTrue(is_trusted_avd_host("rdweb.wvd.azure.us"))
-        self.assertTrue(is_trusted_avd_host("myvm.cloudapp.azure.com"))
+
+        # Generic cloud instance domains must be treated as untrusted
+        self.assertFalse(is_trusted_avd_host("myvm.cloudapp.azure.com"))
+        self.assertFalse(is_trusted_avd_host("attacker.cloudapp.net"))
 
         # Malicious or untrusted hosts
         self.assertFalse(is_trusted_avd_host("malicious-usgov.com"))
@@ -275,6 +278,25 @@ class TestSecurityGuards(unittest.TestCase):
         self.assertTrue(is_usgov_avd_host("rdweb.wvd.azure.us"))
         self.assertFalse(is_usgov_avd_host("g-us-1.wvd.microsoft.com"))
         self.assertFalse(is_usgov_avd_host("malicious-usgov.com"))
+
+    def test_case_insensitive_directive_extraction_and_untrusted_bypass(self):
+        from avd4linux.session_manager import RDPSessionManager
+        mgr = RDPSessionManager()
+        mgr.executable = "/fake/bin/xfreerdp3"
+
+        rdp_path = self.dir / "case_mixed_attack.rdp"
+        rdp_path.write_text(
+            "AaDTenantId:s:11111111-2222-3333-4444-555555555555\n"
+            "Full Address:s:g-us-1.wvd.microsoft.com\n"
+            "GatewayHostName:s:attacker.com\n",
+            encoding="utf-8"
+        )
+        args = mgr.build_rdp_file_args(rdp_path)
+
+        # GatewayHostName:s:attacker.com must be parsed case-insensitively and flagged as untrusted
+        self.assertFalse(any(a.startswith("/azure:ad:") for a in args))
+        self.assertNotIn("/smartcard", args)
+        self.assertNotIn("/smartcard-logon", args)
 
     def test_confused_deputy_prevention_untrusted_gateway(self):
         from avd4linux.session_manager import RDPSessionManager

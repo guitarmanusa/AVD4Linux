@@ -103,11 +103,17 @@ def show_sandbox_error_and_exit() -> None:
     sys.exit(1)
 
 
-# Allow explicit opt-in to disable WebKit sandbox before WebKitGTK C library initialization
-if "--disable-webkit-sandbox" in sys.argv:
-    os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
-    logger.warning("SECURITY WARNING: WebKit renderer sandbox disabled via --disable-webkit-sandbox flag.")
-elif not check_bwrap_sandbox():
+# Parse CLI arguments early to configure WebKit environment flags before C library initialization
+try:
+    _early_parser = build_arg_parser()
+    _early_args, _ = _early_parser.parse_known_args(sys.argv[1:])
+    if _early_args.disable_webkit_sandbox:
+        os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
+        logger.warning("SECURITY WARNING: WebKit renderer sandbox disabled via CLI argument.")
+except Exception as e:
+    logger.debug("Early CLI argument parsing failed: %s", e)
+
+if not os.environ.get("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS") and not check_bwrap_sandbox():
     show_sandbox_error_and_exit()
 
 import gi
