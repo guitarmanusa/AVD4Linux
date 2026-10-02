@@ -148,10 +148,11 @@ def get_piv_certificate_uri() -> Optional[str]:
     return None
 
 
-def get_piv_private_key_uri() -> Optional[str]:
+def get_piv_private_key_uri(cert_uri: Optional[str] = None) -> Optional[str]:
     """Derives the PKCS#11 private key URI matching the PIV Authentication cert."""
     import re
-    cert_uri = get_piv_certificate_uri()
+    if not cert_uri:
+        cert_uri = get_piv_certificate_uri()
     if not cert_uri:
         return None
     return re.sub(r";object=[^;]+", "", cert_uri).replace("type=cert", "type=private")
@@ -161,10 +162,23 @@ def get_piv_tls_certificate():
     """Loads the PIV certificate with private key URI as a Gio.TlsCertificate."""
     import gi
     from gi.repository import Gio
+
+    # 1. Fast-path: Standard PIV Authentication URI (ID %01, slot 9A)
+    # Directly instantiates GTlsCertificate via GnuTLS in <50ms without blocking the GTK UI loop
+    try:
+        cert = Gio.TlsCertificate.new_from_pkcs11_uris(
+            "pkcs11:id=%01;type=cert", "pkcs11:id=%01;type=private"
+        )
+        if cert:
+            return cert
+    except Exception as e:
+        logger.debug("Direct PIV URI load not available, falling back to discovery: %s", e)
+
+    # 2. Fallback: Query p11tool if non-standard token layout
     cert_uri = get_piv_certificate_uri()
     if not cert_uri:
         return None
-    key_uri = get_piv_private_key_uri()
+    key_uri = get_piv_private_key_uri(cert_uri)
     try:
         return Gio.TlsCertificate.new_from_pkcs11_uris(cert_uri, key_uri)
     except Exception as e:
