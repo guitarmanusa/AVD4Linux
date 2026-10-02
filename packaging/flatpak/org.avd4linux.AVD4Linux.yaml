@@ -250,6 +250,7 @@ modules:
       - install -Dm644 data/org.avd4linux.AVD4Linux.desktop ${FLATPAK_DEST}/share/applications/org.avd4linux.AVD4Linux.desktop
       - install -Dm644 data/org.avd4linux.AVD4Linux.metainfo.xml ${FLATPAK_DEST}/share/metainfo/org.avd4linux.AVD4Linux.metainfo.xml
       - install -Dm644 data/org.avd4linux.AVD4Linux.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.avd4linux.AVD4Linux.svg
+      - install -Dm644 data/opensc.conf ${FLATPAK_DEST}/etc/opensc.conf
     sources:
       - type: dir
         path: ../..
