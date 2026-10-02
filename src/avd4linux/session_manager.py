@@ -300,6 +300,7 @@ class RDPSessionManager:
         microphone_enabled: bool = False,
         webcam_enabled: bool = False,
         sound_enabled: bool = True,
+        allow_untrusted_smartcard: bool = False,
     ) -> List[str]:
         """Builds command line arguments to launch an .rdp file with smart card redirection."""
         if not self.executable:
@@ -310,11 +311,35 @@ class RDPSessionManager:
             raise FileNotFoundError(f"RDP file not found: {resolved_path}")
 
         rdp_path = str(resolved_path)
+
+        # Extract sovereign tenant, gateway host, and target full address
+        tenant_id = None
+        gateway_host = ""
+        target_host = ""
+        try:
+            content = Path(rdp_path).read_text(encoding="utf-8", errors="replace")
+            for line in content.splitlines():
+                line_s = line.strip()
+                if line_s.startswith("aadtenantid:s:"):
+                    tenant_id = line_s.split(":", 2)[2].strip()
+                elif line_s.startswith("gatewayhostname:s:"):
+                    raw_gw = line_s.split(":", 2)[2].strip().lower()
+                    gateway_host = raw_gw.split(":", 1)[0]
+                elif line_s.startswith("full address:s:"):
+                    raw_target = line_s.split(":", 2)[2].strip().lower()
+                    target_host = raw_target.split(":", 1)[0]
+        except Exception as e:
+            logger.warning("Could not parse directives from .rdp file: %s", e)
+
+        # Validate destination hosts against trusted Microsoft AVD infrastructure
+        from .clouds import is_trusted_avd_host, is_usgov_avd_host
+
+        hosts_to_check = [h for h in (gateway_host, target_host) if h]
+        all_hosts_trusted = bool(hosts_to_check) and all(is_trusted_avd_host(h) for h in hosts_to_check)
+
         args = [
             self.executable,
             rdp_path,
-            "/smartcard",
-            "/smartcard-logon",
             "/network:auto",
             "+fonts",
             "/gfx",
@@ -323,26 +348,20 @@ class RDPSessionManager:
             "/floatbar",
         ]
 
-        # Extract sovereign tenant and gateway host if present
-        try:
-            content = Path(rdp_path).read_text(encoding="utf-8", errors="replace")
-            tenant_id = None
-            gateway_host = ""
-            for line in content.splitlines():
-                if line.startswith("aadtenantid:s:"):
-                    tenant_id = line.split(":", 2)[2].strip()
-                elif line.startswith(("gatewayhostname:s:", "full address:s:")):
-                    raw_gw = line.split(":", 2)[2].strip().lower()
-                    gateway_host = raw_gw.split(":", 1)[0]
+        # Only redirect Smart Card hardware if destination hosts belong to trusted AVD infrastructure
+        if all_hosts_trusted or allow_untrusted_smartcard:
+            args.insert(2, "/smartcard")
+            args.insert(3, "/smartcard-logon")
+        else:
+            logger.warning(
+                "Smart Card (CAC/PIV) redirection disabled for untrusted host(s): gateway='%s', target='%s'",
+                gateway_host, target_host
+            )
 
-            import re
-            if tenant_id and re.fullmatch(r"^[0-9a-fA-F\-]{36}$", tenant_id):
-                # Dynamically determine cloud authority and scope based on gateway endpoint
-                is_usgov = (
-                    gateway_host.endswith(".azure.us")
-                    or gateway_host.endswith(".microsoftonline.us")
-                    or "usgov" in gateway_host
-                )
+        import re
+        if tenant_id and re.fullmatch(r"^[0-9a-fA-F\-]{36}$", tenant_id):
+            if all_hosts_trusted:
+                is_usgov = is_usgov_avd_host(gateway_host) or is_usgov_avd_host(target_host)
                 authority = "login.microsoftonline.us" if is_usgov else "login.microsoftonline.com"
                 scope = "https://www.wvd.azure.us/.default" if is_usgov else "https://wvd.microsoft.com/.default"
 
@@ -351,10 +370,13 @@ class RDPSessionManager:
                     f"avd-scope:{scope},"
                     f"avd-access:https://login.microsoftonline.com/common/oauth2/nativeclient"
                 )
-            elif tenant_id:
-                logger.warning("Invalid tenant ID format in RDP file, ignoring.")
-        except Exception as e:
-            logger.warning("Could not parse tenant from .rdp file: %s", e)
+            else:
+                logger.warning(
+                    "Refusing to route Entra ID / AVD authentication tokens to untrusted host(s): gateway='%s', target='%s'",
+                    gateway_host, target_host
+                )
+        elif tenant_id:
+            logger.warning("Invalid tenant ID format in RDP file, ignoring.")
 
         if extra_args:
             args.extend(extra_args)
@@ -393,6 +415,7 @@ class RDPSessionManager:
         microphone_enabled: bool = False,
         webcam_enabled: bool = False,
         sound_enabled: bool = True,
+        allow_untrusted_smartcard: bool = False,
     ) -> subprocess.Popen:
         """Launches FreeRDP 3 asynchronously using a pseudo-terminal with ECHO disabled."""
         import pty
@@ -403,6 +426,7 @@ class RDPSessionManager:
             microphone_enabled=microphone_enabled,
             webcam_enabled=webcam_enabled,
             sound_enabled=sound_enabled,
+            allow_untrusted_smartcard=allow_untrusted_smartcard,
         )
         safe_cmd = [
             arg if not arg.startswith(("/azure:ad:", "/access-token:", "/gateway:"))

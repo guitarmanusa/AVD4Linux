@@ -31,13 +31,14 @@ ALLOWED_NAVIGATION_DOMAINS = (
     "microsoftonline.com",
     "msauth.net",
     "msftauth.net",
-    "azure.us",
+    "msftidentity.com",
     "microsoftonline.us",
-    "azure.com",
-    "live.com",
-    "windows.net",
-    "windowsazure.us",
-    "windowsazure.com",
+    "login.live.com",
+    "login.windows.net",
+    "account.activedirectory.windowsazure.com",
+    "wvd.microsoft.com",
+    "wvd.azure.us",
+    "wvd.azure.cn",
 )
 
 ALLOWED_MTLS_DOMAINS = (
