@@ -513,7 +513,7 @@ class AVDMainWindow(Adw.ApplicationWindow):
                         # C Extension Bridge: transfers PIN directly from GTK to WebKit in C memory.
                         # Python never touches the string, preventing immutable allocation on the Python heap.
                         from . import _pin_bridge
-                        handled = _pin_bridge.authenticate_pin(entry, request, cert_uri, key_uri)
+                        handled = _pin_bridge.authenticate_pin(entry, request)
                         if handled:
                             logger.info("CAC PIN submitted directly via C Extension Bridge (Zero Python Heap Exposure)")
                         else:
