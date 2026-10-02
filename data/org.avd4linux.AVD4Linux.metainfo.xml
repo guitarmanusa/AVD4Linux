@@ -45,6 +45,18 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.2.6" date="2026-10-02">
+      <description>
+        <p>Security hardening, native C extension PIN bridge, and Flatpak smartcard enhancements:</p>
+        <ul>
+          <li>Native C Extension Bridge for zero-Python-heap CAC PIN entry and immediate cryptographic wiping.</li>
+          <li>Direct in-process OpenSC PKCS#11 auto-load to eliminate cross-sandbox socket RPC proxy failures.</li>
+          <li>Non-intrusive PC/SC hardware card presence monitoring via SCardGetStatusChange.</li>
+          <li>X11 display socket integration for seamless FreeRDP launches under Wayland desktop sessions.</li>
+          <li>Universal ISO 7816-4 APDU chunking configuration for USB CCID smart card reader stability.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-09-28">
       <description>
         <p>Added optional local device pass-through, disabled by default:</p>
