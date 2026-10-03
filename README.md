@@ -418,6 +418,8 @@ The following items are planned for upcoming releases:
 - **Host Smart Card Setup**: The application relies on the host's `pcscd` service and USB CCID driver. If your reader is not detected in `pcsc_scan`, verify your USB reader hardware and CCID drivers.
 - **DoD CA Trust**: If the host system trust store does not contain the DoD Root and Intermediate CAs, WebKitGTK and FreeRDP will reject the sovereign gateway TLS certificates. Follow the prerequisite instructions above to install the DoD CA certificates.
 - **Physical CAC Requirement**: Certificate-Based Authentication and remote desktop smart card redirection require physical presence of the CAC/PIV card in the reader and PIN entry for cryptographic signing operations.
+- **Selecting the Right Certificate**: Entra ID's `certauth` endpoint expects the CAC's PIV Authentication certificate (slot 9A, object ID exactly `0x01`). PKCS#11 treats `id=%01` as a *prefix* match, so a naive query also matches unrelated objects whose ID merely begins with `0x01` — including certificates in the system trust store. AVD4Linux pins enumeration to the OpenSC module, requires an exact `0x01` object ID, discards certificates from software/system-trust modules, and prefers the PIV Authentication object when several slot 9A objects share that ID. Certificates in the trust store have no private key, so they can never satisfy client-certificate authentication.
+  - If authentication still fails, run with `--verbose` to see the selected `label`, object ID, and full PKCS#11 URI before any credential is offered.
 
 ---
 

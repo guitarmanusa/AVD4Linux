@@ -123,8 +123,110 @@ class SmartCardMonitor:
             self._lib.SCardReleaseContext(ctx)
 
 
+# The PIV Authentication certificate lives on slot 9A with the object ID 0x01
+# (NIST SP 800-73-4, "PIV Authentication Key / Certificate"). Note that PKCS#11
+# treats `id=%01` as a *prefix* match, so it also matches unrelated objects whose
+# ID merely begins with 0x01 -- for example the DER-encoded certificate IDs in the
+# p11-kit system trust store. Every match below is therefore required to be an
+# exact ID and to live on a hardware token.
+PIV_AUTH_OBJECT_ID = "01"
+
+# Token attributes that identify a software/system-trust PKCS#11 store rather than
+# the user's CAC. Objects from these modules have no private key, so they can never
+# satisfy client-certificate authentication and must never be offered to WebKit.
+_SOFTWARE_TOKEN_MARKERS = (
+    "model=p11-kit-trust",
+    "model=p11-kit",
+    "model=gnutls%20trust",
+    "manufacturer=pkcs%2311%20kit",
+    "token=system%20trust",
+    "token=gnutls%20trust",
+)
+
+# Candidate locations of the OpenSC PKCS#11 provider. Pinning p11tool to this
+# module keeps the system trust store out of the enumeration entirely.
+_OPENSC_PROVIDER_PATHS = (
+    "/app/lib/opensc-pkcs11.so",  # Flatpak
+    "/usr/lib/opensc-pkcs11.so",
+    "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so",
+    "/usr/lib64/opensc-pkcs11.so",
+)
+
+
+def _find_opensc_provider() -> Optional[str]:
+    import os
+
+    for path in _OPENSC_PROVIDER_PATHS:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _uri_object_id(uri: str) -> str:
+    """Returns the normalised hex object ID encoded in a PKCS#11 URI, or ''."""
+    import re
+
+    match = re.search(r"(?:^|;)id=([^;]+)", uri)
+    if not match:
+        return ""
+    return re.sub(r"[^0-9a-fA-F]", "", match.group(1)).upper()
+
+
+def _uri_is_hardware_token(uri: str) -> bool:
+    """Rejects URIs that point at a software/system-trust PKCS#11 store."""
+    lowered = uri.lower()
+    return not any(marker in lowered for marker in _SOFTWARE_TOKEN_MARKERS)
+
+
+def _is_piv_labelled(record) -> bool:
+    """True when an object's own metadata identifies it as PIV Authentication."""
+    haystack = f"{record['label']} {record['usage']}".lower()
+    return "piv" in haystack and "authentication" in haystack
+
+
+def _parse_p11tool_certificates(output: str) -> list:
+    """Parses `p11tool --list-all-certs` output into per-object records.
+
+    Each record is a dict with the object's ``label``, ``id``, ``usage`` and
+    ``url``. Parsing per block (instead of scanning line by line) is what keeps a
+    URL from being attributed to a neighbouring object.
+    """
+    import re
+
+    records = []
+    current = None
+
+    def flush():
+        if current and current.get("url"):
+            records.append(current)
+
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("Certificate:") or line.startswith("Object "):
+            flush()
+            current = {"label": "", "id": "", "usage": "", "url": ""}
+            continue
+        if current is None:
+            continue
+        for field in ("URL", "Label", "ID", "Usage"):
+            prefix = field + ":"
+            if line.startswith(prefix):
+                current[field.lower()] = line[len(prefix):].strip()
+                break
+        else:
+            # Older p11tool builds print "Certificate for PIV Authentication".
+            match = re.match(r"Certificate for (.+)", line)
+            if match and not current["label"]:
+                current["label"] = match.group(1).strip()
+
+    flush()
+    return records
+
+
 def get_piv_certificate_uri() -> Optional[str]:
-    """Finds the PKCS#11 URI for the PIV Authentication certificate."""
+    """Finds the PKCS#11 URI for the PIV Authentication certificate on the CAC."""
     import shutil
     import subprocess
 
@@ -133,29 +235,71 @@ def get_piv_certificate_uri() -> Optional[str]:
         logger.error("p11tool not found in secure system paths: %s", p11tool_path)
         return None
 
+    provider = _find_opensc_provider()
+    if provider:
+        logger.info("Enumerating PIV certificates via OpenSC provider: %s", provider)
+
     # Query specifically for the PIV Authentication certificate (slot 9A / ID %01)
     queries = [
         [p11tool_path, "--list-certs", "pkcs11:id=%01"],
         [p11tool_path, "--list-all-certs", "pkcs11:model=PKCS%2315%20emulated;type=cert"],
         [p11tool_path, "--list-all-certs", "pkcs11:type=cert"],
     ]
-    for cmd in queries:
+
+    for base in queries:
+        cmd = ([base[0], f"--provider={provider}"] if provider else []) + base[1:]
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            current_url = None
-            for line in res.stdout.splitlines():
-                line = line.strip()
-                if line.startswith("URL:"):
-                    current_url = line.split("URL:", 1)[1].strip()
-                elif "Certificate for PIV Authentication" in line or "ID: 01" in line:
-                    if current_url:
-                        if "id=" not in current_url:
-                            current_url += ";id=%01"
-                        return current_url
-            if current_url and ("id=%01" in current_url or "id=01" in current_url or "PIV" in current_url):
-                return current_url
         except Exception as e:
             logger.error("Error finding PIV certificate URI: %s", e)
+            continue
+
+        records = _parse_p11tool_certificates(res.stdout)
+        if not records:
+            continue
+
+        candidates = [r for r in records if _uri_is_hardware_token(r["url"])]
+        if len(candidates) != len(records):
+            logger.info(
+                "Ignoring %d certificate(s) from software/system-trust PKCS#11 modules",
+                len(records) - len(candidates),
+            )
+
+        # A DoD CAC's slot 9A holds several objects that all share object ID 0x01
+        # (CAC Authentication, PIV Authentication, ...). Entra ID certauth expects
+        # the PIV Authentication certificate, so a PIV-labelled object wins over a
+        # bare ID match, and label/usage only ever corroborate -- they never select
+        # an object on their own, because the trust store reuses similar wording
+        # for unrelated roots.
+        exact = [r for r in candidates if _uri_object_id(r["url"]) == PIV_AUTH_OBJECT_ID]
+        for record in exact:
+            if _is_piv_labelled(record):
+                logger.info(
+                    "Found PIV Authentication certificate: label=%r id=%s url=%s",
+                    record["label"], record["id"] or PIV_AUTH_OBJECT_ID, record["url"],
+                )
+                return record["url"]
+
+        if exact:
+            logger.info(
+                "Found slot 9A certificate by exact object ID %s: label=%r url=%s",
+                PIV_AUTH_OBJECT_ID, exact[0]["label"], exact[0]["url"],
+            )
+            return exact[0]["url"]
+
+        # Some middlewares expose a longer ID for slot 9A. Only trust that on a
+        # hardware token whose own metadata says PIV Authentication.
+        for record in candidates:
+            if _is_piv_labelled(record):
+                logger.info(
+                    "Found PIV Authentication certificate by label: label=%r url=%s",
+                    record["label"], record["url"],
+                )
+                return record["url"]
+
+    logger.error(
+        "No PIV Authentication certificate (id=%s) found on a hardware token", PIV_AUTH_OBJECT_ID
+    )
     return None
 
 
@@ -168,7 +312,11 @@ def get_piv_private_key_uri(cert_uri: Optional[str] = None) -> Optional[str]:
         return None
 
     uri = re.sub(r";object=[^;]+", "", cert_uri).replace("type=cert", "type=private")
-    if "id=%01" not in uri and "id=01" not in uri:
+    # Reuse the certificate's exact ID so the key lookup stays as narrow as the
+    # certificate lookup. Appending a bare `id=%01` would widen it back into a
+    # prefix match, which is what previously picked up the system trust store.
+    object_id = _uri_object_id(uri)
+    if not object_id:
         uri += ";id=%01"
     return uri
 
