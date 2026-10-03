@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 from avd4linux import smartcard
+from avd4linux.settings import Settings
 from avd4linux.smartcard import (
     PIV_AUTH_OBJECT_ID,
     _parse_p11tool_certificates,
@@ -17,6 +18,7 @@ from avd4linux.smartcard import (
     _uri_object_id,
     get_piv_certificate_uri,
     get_piv_private_key_uri,
+    select_certificate,
 )
 
 # The exact URI from the production failure: a Spanish AEAT root CA living in the
@@ -166,7 +168,7 @@ class TestPivCertificateUri(unittest.TestCase):
     def test_provider_pinned_when_opensc_present(self):
         with mock.patch("shutil.which", return_value="/usr/bin/p11tool"), \
                 mock.patch("subprocess.run", return_value=_run(CAC_LISTING)) as run, \
-                mock.patch.object(smartcard, "_find_opensc_provider",
+                mock.patch.object(smartcard, "find_opensc_provider",
                                   return_value="/app/lib/opensc-pkcs11.so"):
             get_piv_certificate_uri()
         first_cmd = run.call_args_list[0].args[0]
@@ -175,7 +177,7 @@ class TestPivCertificateUri(unittest.TestCase):
     def test_no_provider_flag_when_opensc_absent(self):
         with mock.patch("shutil.which", return_value="/usr/bin/p11tool"), \
                 mock.patch("subprocess.run", return_value=_run(CAC_LISTING)) as run, \
-                mock.patch.object(smartcard, "_find_opensc_provider", return_value=None):
+                mock.patch.object(smartcard, "find_opensc_provider", return_value=None):
             get_piv_certificate_uri()
         first_cmd = run.call_args_list[0].args[0]
         self.assertFalse([a for a in first_cmd if a.startswith("--provider")])
@@ -209,8 +211,89 @@ class TestPivPrivateKeyUri(unittest.TestCase):
     def test_key_uri_is_none_without_certificate(self):
         with mock.patch("shutil.which", return_value="/usr/bin/p11tool"), \
                 mock.patch("subprocess.run", return_value=_run("")), \
-                mock.patch.object(smartcard, "_find_opensc_provider", return_value=None):
+                mock.patch.object(smartcard, "find_opensc_provider", return_value=None):
             self.assertIsNone(get_piv_private_key_uri(None))
+
+
+class TestUserCertificateSelection(unittest.TestCase):
+    """The user must be able to override automatic PIV selection."""
+
+    RECORDS = [
+        {"label": "Certificate for PIV Authentication", "id": "01", "usage": "", "url": CAC_PIV_URI},
+        {
+            "label": "Certificate for Digital Signature",
+            "id": "02",
+            "usage": "",
+            "url": "pkcs11:token=PIV%20II;serial=01;id=%02;object=DS%20cert;type=cert",
+        },
+        {
+            "label": "Certificate for Card Authentication",
+            "id": "04",
+            "usage": "",
+            "url": "pkcs11:token=PIV%20II;serial=01;id=%04;object=CA%20cert;type=cert",
+        },
+    ]
+
+    def test_auto_prefers_piv_authentication(self):
+        chosen = select_certificate(self.RECORDS)
+        self.assertEqual(chosen["url"], CAC_PIV_URI)
+
+    def test_select_by_object_id(self):
+        chosen = select_certificate(self.RECORDS, "02")
+        self.assertEqual(_uri_object_id(chosen["url"]), "02")
+
+    def test_select_by_object_id_with_prefix_markers(self):
+        chosen = select_certificate(self.RECORDS, "0x04")
+        self.assertEqual(_uri_object_id(chosen["url"]), "04")
+
+    def test_select_by_exact_label(self):
+        chosen = select_certificate(self.RECORDS, "Certificate for Card Authentication")
+        self.assertEqual(_uri_object_id(chosen["url"]), "04")
+
+    def test_select_by_label_substring(self):
+        chosen = select_certificate(self.RECORDS, "Digital Signature")
+        self.assertEqual(_uri_object_id(chosen["url"]), "02")
+
+    def test_select_by_full_uri(self):
+        chosen = select_certificate(self.RECORDS, CAC_PIV_URI)
+        self.assertEqual(chosen["url"], CAC_PIV_URI)
+
+    def test_exact_uri_must_match_an_enumerated_certificate(self):
+        self.assertIsNone(select_certificate(self.RECORDS, TRUST_STORE_ROOT))
+
+    def test_unknown_selector_returns_none(self):
+        self.assertIsNone(select_certificate(self.RECORDS, "does-not-exist"))
+
+    def test_empty_records(self):
+        self.assertIsNone(select_certificate([], "01"))
+        self.assertIsNone(select_certificate([]))
+
+    def test_uri_resolves_saved_selector(self):
+        with mock.patch("shutil.which", return_value="/usr/bin/p11tool"), \
+                mock.patch("subprocess.run", return_value=_run(CAC_LISTING)), \
+                mock.patch.object(smartcard, "find_opensc_provider", return_value="/app/lib/opensc-pkcs11.so"), \
+                mock.patch.object(Settings, "load", return_value=Settings(piv_certificate_selector="02")), \
+                mock.patch("subprocess.run", return_value=_run(_listing_with_ds_only())):
+            self.assertEqual(
+                _uri_object_id(get_piv_certificate_uri()),
+                "02",
+            )
+
+    def test_uri_falls_back_to_auto_when_no_saved_selector(self):
+        with mock.patch("shutil.which", return_value="/usr/bin/p11tool"), \
+                mock.patch("subprocess.run", return_value=_run(CAC_LISTING)), \
+                mock.patch.object(smartcard, "find_opensc_provider", return_value="/app/lib/opensc-pkcs11.so"), \
+                mock.patch.object(Settings, "load", return_value=Settings()):
+            self.assertEqual(get_piv_certificate_uri(), CAC_PIV_URI)
+
+
+def _listing_with_ds_only() -> str:
+    """A listing whose only ID 01 object is the Digital Signature certificate."""
+    return (
+        "Certificate:\n  Label: Certificate for Digital Signature\n  ID: 02\n"
+        "  Usage: Digital Signature\n"
+        "  URL: pkcs11:token=PIV%20II;serial=01;id=%02;object=DS%20cert;type=cert\n"
+    )
 
 
 if __name__ == "__main__":

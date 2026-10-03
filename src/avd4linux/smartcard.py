@@ -4,6 +4,7 @@ from __future__ import annotations
 import ctypes as C
 import ctypes.util as U
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -153,7 +154,8 @@ _OPENSC_PROVIDER_PATHS = (
 )
 
 
-def _find_opensc_provider() -> Optional[str]:
+def find_opensc_provider() -> Optional[str]:
+    """Locates the OpenSC PKCS#11 provider, preferring the sandbox-bundled copy."""
     import os
 
     for path in _OPENSC_PROVIDER_PATHS:
@@ -225,21 +227,32 @@ def _parse_p11tool_certificates(output: str) -> list:
     return records
 
 
-def get_piv_certificate_uri() -> Optional[str]:
-    """Finds the PKCS#11 URI for the PIV Authentication certificate on the CAC."""
+def enumerate_hardware_certificates() -> list:
+    """Lists every certificate the hardware token exposes, newest format first.
+
+    Returns a list of dicts with ``label``, ``id``, ``usage`` and ``url``.
+    Certificates belonging to software/system-trust PKCS#11 modules are dropped,
+    because those objects have no private key and can never satisfy client-cert
+    authentication.
+    """
     import shutil
     import subprocess
 
     p11tool_path = shutil.which("p11tool")
     if not p11tool_path or not p11tool_path.startswith(("/usr/bin", "/bin", "/usr/local/bin")):
         logger.error("p11tool not found in secure system paths: %s", p11tool_path)
-        return None
+        return []
 
-    provider = _find_opensc_provider()
+    provider = find_opensc_provider()
     if provider:
-        logger.info("Enumerating PIV certificates via OpenSC provider: %s", provider)
+        logger.info("Enumerating smart card certificates via OpenSC provider: %s", provider)
+    else:
+        logger.warning(
+            "No OpenSC PKCS#11 provider found; falling back to p11-kit enumeration, "
+            "which may not include the smart card reader"
+        )
 
-    # Query specifically for the PIV Authentication certificate (slot 9A / ID %01)
+    # Narrowest first: the PIV slot, then the emulated PKCS#15 model, then everything.
     queries = [
         [p11tool_path, "--list-certs", "pkcs11:id=%01"],
         [p11tool_path, "--list-all-certs", "pkcs11:model=PKCS%2315%20emulated;type=cert"],
@@ -251,7 +264,7 @@ def get_piv_certificate_uri() -> Optional[str]:
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
         except Exception as e:
-            logger.error("Error finding PIV certificate URI: %s", e)
+            logger.error("Error enumerating smart card certificates: %s", e)
             continue
 
         records = _parse_p11tool_certificates(res.stdout)
@@ -264,50 +277,124 @@ def get_piv_certificate_uri() -> Optional[str]:
                 "Ignoring %d certificate(s) from software/system-trust PKCS#11 modules",
                 len(records) - len(candidates),
             )
+        if candidates:
+            return candidates
 
-        # A DoD CAC's slot 9A holds several objects that all share object ID 0x01
-        # (CAC Authentication, PIV Authentication, ...). Entra ID certauth expects
-        # the PIV Authentication certificate, so a PIV-labelled object wins over a
-        # bare ID match, and label/usage only ever corroborate -- they never select
-        # an object on their own, because the trust store reuses similar wording
-        # for unrelated roots.
-        exact = [r for r in candidates if _uri_object_id(r["url"]) == PIV_AUTH_OBJECT_ID]
-        for record in exact:
-            if _is_piv_labelled(record):
-                logger.info(
-                    "Found PIV Authentication certificate: label=%r id=%s url=%s",
-                    record["label"], record["id"] or PIV_AUTH_OBJECT_ID, record["url"],
-                )
-                return record["url"]
+    return []
 
-        if exact:
-            logger.info(
-                "Found slot 9A certificate by exact object ID %s: label=%r url=%s",
-                PIV_AUTH_OBJECT_ID, exact[0]["label"], exact[0]["url"],
-            )
-            return exact[0]["url"]
 
-        # Some middlewares expose a longer ID for slot 9A. Only trust that on a
-        # hardware token whose own metadata says PIV Authentication.
-        for record in candidates:
-            if _is_piv_labelled(record):
-                logger.info(
-                    "Found PIV Authentication certificate by label: label=%r url=%s",
-                    record["label"], record["url"],
-                )
-                return record["url"]
+def describe_certificate(record: dict) -> str:
+    """Renders a certificate record as a single human-readable line."""
+    object_id = _uri_object_id(record.get("url", "")) or record.get("id", "") or "?"
+    label = record.get("label") or "(unlabelled)"
+    return f"id={object_id:<4} label={label!r} url={record.get('url', '')}"
 
-    logger.error(
-        "No PIV Authentication certificate (id=%s) found on a hardware token", PIV_AUTH_OBJECT_ID
-    )
+
+def select_certificate(records: list, selector: Optional[str] = None) -> Optional[dict]:
+    """Chooses the client certificate to present for mutual TLS.
+
+    With no selector, this auto-selects the PIV Authentication certificate:
+    Entra ID certauth expects that certificate, and a DoD CAC's slot 9A holds
+    several objects sharing object ID 0x01 (CAC Authentication, PIV
+    Authentication, ...), so a PIV-labelled object wins over a bare ID match.
+    Label and usage only ever corroborate a match -- they never select an object
+    on their own, because the system trust store reuses similar wording.
+
+    A selector lets the user override that choice with an exact label, a label
+    substring, an object ID in hex, or a full ``pkcs11:`` URI.
+    """
+    if not records:
+        return None
+
+    if selector:
+        needle = selector.strip()
+        if needle.lower().startswith("pkcs11:"):
+            for record in records:
+                if record["url"].lower() == needle.lower():
+                    return record
+            logger.error("No enumerated certificate matches URI %s", selector)
+            return None
+
+        # Accept a hex object ID in either `04` or `0x04` form.
+        wanted_id = re.sub(r"^0[xX]", "", needle.strip())
+        wanted_id = re.sub(r"[^0-9a-fA-F]", "", wanted_id).upper()
+        if wanted_id:
+            for record in records:
+                if _uri_object_id(record["url"]) == wanted_id:
+                    return record
+        lowered = needle.lower()
+        for record in records:
+            if record["label"].lower() == lowered:
+                return record
+        for record in records:
+            if lowered in record["label"].lower():
+                return record
+
+        logger.error(
+            "No certificate on the hardware token matches selector %r. Available certificates:", selector
+        )
+        for record in records:
+            logger.error("  %s", describe_certificate(record))
+        return None
+
+    exact = [r for r in records if _uri_object_id(r["url"]) == PIV_AUTH_OBJECT_ID]
+    for record in exact:
+        if _is_piv_labelled(record):
+            return record
+    if exact:
+        return exact[0]
+
+    # Some middlewares expose a longer ID for slot 9A. Only trust that on a
+    # hardware token whose own metadata says PIV Authentication.
+    for record in records:
+        if _is_piv_labelled(record):
+            return record
+
     return None
 
 
-def get_piv_private_key_uri(cert_uri: Optional[str] = None) -> Optional[str]:
-    """Derives the PKCS#11 private key URI specifically targeting the PIV Authentication key (slot 9A)."""
-    import re
+def get_piv_certificate_uri(selector: Optional[str] = None) -> Optional[str]:
+    """Resolves the PKCS#11 URI of the client certificate to present.
+
+    ``selector`` defaults to the user's saved ``piv_certificate_selector``
+    preference. Pass an empty string to force automatic selection.
+    """
+    if selector is None:
+        try:
+            from .settings import Settings
+
+            selector = Settings.load().piv_certificate_selector
+        except Exception as e:
+            logger.debug("Could not read saved certificate selector: %s", e)
+            selector = ""
+
+    records = enumerate_hardware_certificates()
+    if not records:
+        logger.error(
+            "No certificates found on a hardware token. Check that the CAC is inserted "
+            "and that pcscd is running (pcsc_scan), then retry."
+        )
+        return None
+
+    record = select_certificate(records, selector or None)
+    if not record:
+        if not selector:
+            logger.error(
+                "No PIV Authentication certificate (id=%s) found on the hardware token. "
+                "Run 'avd4linux --list-smartcard-certs' to see what the card exposes, "
+                "then set one explicitly with --piv-cert.",
+                PIV_AUTH_OBJECT_ID,
+            )
+        return None
+
+    logger.info("Selected client certificate: %s", describe_certificate(record))
+    return record["url"]
+
+
+def get_piv_private_key_uri(cert_uri: Optional[str] = None, selector: Optional[str] = None) -> Optional[str]:
+    """Derives the PKCS#11 private key URI for the certificate's own slot."""
     if not cert_uri:
-        cert_uri = get_piv_certificate_uri()
+        cert_uri = get_piv_certificate_uri(selector)
     if not cert_uri:
         return None
 
@@ -321,12 +408,12 @@ def get_piv_private_key_uri(cert_uri: Optional[str] = None) -> Optional[str]:
     return uri
 
 
-def get_piv_tls_certificate():
-    """Loads the PIV certificate with private key URI as a Gio.TlsCertificate."""
+def get_piv_tls_certificate(selector: Optional[str] = None):
+    """Loads the selected client certificate as a Gio.TlsCertificate."""
     import gi
     from gi.repository import Gio
 
-    cert_uri = get_piv_certificate_uri()
+    cert_uri = get_piv_certificate_uri(selector)
     if not cert_uri:
         return None
     key_uri = get_piv_private_key_uri(cert_uri)

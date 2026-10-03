@@ -8,32 +8,6 @@ import subprocess
 from pathlib import Path
 import sys
 
-os.environ.setdefault("OPENSC_CONF", "/app/etc/opensc.conf")
-
-# Configure GnuTLS to auto-load the native OpenSC PKCS#11 provider across all container processes
-# (including WebKitNetworkProcess) to bypass the socket RPC proxy
-try:
-    os.makedirs("/etc/gnutls", exist_ok=True)
-    with open("/etc/gnutls/pkcs11.conf", "w") as f:
-        f.write("load=/app/lib/opensc-pkcs11.so\n")
-except Exception:
-    pass
-
-# Initialize GnuTLS PKCS#11 subsystem directly with the native OpenSC provider
-# to bypass the p11-kit-client RPC proxy across the Flatpak sandbox boundary
-try:
-    import ctypes
-    _gnutls = ctypes.CDLL("libgnutls.so.30")
-    if hasattr(_gnutls, "gnutls_pkcs11_init") and hasattr(_gnutls, "gnutls_pkcs11_add_provider"):
-        _gnutls.gnutls_pkcs11_init.argtypes = [ctypes.c_uint, ctypes.c_char_p]
-        _gnutls.gnutls_pkcs11_init.restype = ctypes.c_int
-        _gnutls.gnutls_pkcs11_add_provider.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-        _gnutls.gnutls_pkcs11_add_provider.restype = ctypes.c_int
-        _gnutls.gnutls_pkcs11_init(0, None)
-        _ret = _gnutls.gnutls_pkcs11_add_provider(b"/app/lib/opensc-pkcs11.so", None)
-except Exception:
-    pass
-
 from .cli import build_arg_parser
 
 logger = logging.getLogger(__name__)
@@ -42,6 +16,63 @@ logger = logging.getLogger(__name__)
 def in_flatpak() -> bool:
     """Detects whether we are already running inside a Flatpak sandbox."""
     return bool(os.environ.get("FLATPAK_ID")) or Path("/.flatpak-info").exists()
+
+
+def _configure_pkcs11_provider() -> None:
+    """Points OpenSC and GnuTLS at the sandbox-bundled OpenSC PKCS#11 provider.
+
+    This exists to bypass the Flatpak p11-kit client RPC proxy. It is strictly a
+    sandbox concern: on a native install the paths below do not exist, and setting
+    OPENSC_CONF to a nonexistent file makes OpenSC fail to initialise its PKCS#11
+    module entirely (zero tokens), while writing /etc/gnutls/pkcs11.conf would
+    clobber the host's system-wide GnuTLS PKCS#11 configuration. So every step is
+    gated on actually being inside a Flatpak *and* on the bundled files existing.
+    """
+    if not in_flatpak():
+        logger.debug("Not running inside a Flatpak; leaving host OpenSC/GnuTLS configuration untouched")
+        return
+
+    from .smartcard import find_opensc_provider
+
+    provider = find_opensc_provider()
+    if not provider:
+        logger.warning(
+            "Inside a Flatpak but no OpenSC PKCS#11 provider was found; "
+            "smart card authentication will not be available"
+        )
+        return
+
+    opensc_conf = "/app/etc/opensc.conf"
+    if os.path.exists(opensc_conf):
+        os.environ.setdefault("OPENSC_CONF", opensc_conf)
+
+    # Configure GnuTLS to auto-load the native OpenSC provider across all sandbox
+    # processes (including WebKitNetworkProcess) so certificate requests issued
+    # in another process still reach the hardware token.
+    try:
+        os.makedirs("/etc/gnutls", exist_ok=True)
+        with open("/etc/gnutls/pkcs11.conf", "w") as f:
+            f.write(f"load={provider}\n")
+    except Exception as e:
+        logger.debug("Could not write /etc/gnutls/pkcs11.conf: %s", e)
+
+    try:
+        import ctypes
+
+        _gnutls = ctypes.CDLL("libgnutls.so.30")
+        if hasattr(_gnutls, "gnutls_pkcs11_init") and hasattr(_gnutls, "gnutls_pkcs11_add_provider"):
+            _gnutls.gnutls_pkcs11_init.argtypes = [ctypes.c_uint, ctypes.c_char_p]
+            _gnutls.gnutls_pkcs11_init.restype = ctypes.c_int
+            _gnutls.gnutls_pkcs11_add_provider.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+            _gnutls.gnutls_pkcs11_add_provider.restype = ctypes.c_int
+            _gnutls.gnutls_pkcs11_init(0, None)
+            _gnutls.gnutls_pkcs11_add_provider(provider.encode("utf-8"), None)
+            logger.info("Registered OpenSC provider %s with GnuTLS", provider)
+    except Exception as e:
+        logger.debug("Direct GnuTLS provider registration unavailable: %s", e)
+
+
+_configure_pkcs11_provider()
 
 
 def check_bwrap_sandbox() -> bool:
@@ -171,6 +202,43 @@ class AVDApplication(Adw.Application):
             self.window = AVDMainWindow(self, initial_cloud_id=self.initial_cloud)
         self.window.present()
 
+    def _list_smartcard_certs(self) -> int:
+        """Prints every certificate the hardware token exposes, then exits."""
+        from .smartcard import describe_certificate, enumerate_hardware_certificates
+
+        records = enumerate_hardware_certificates()
+        if not records:
+            print(
+                "No certificates found on a smart card token.\n"
+                "Check that the CAC is inserted, that pcscd is running, and that the\n"
+                "reader appears in 'pcsc_scan'. Also confirm the OpenSC PKCS#11 provider\n"
+                "is installed (package 'opensc-pkcs11')."
+            )
+            return 1
+
+        print(f"{len(records)} certificate(s) available on the smart card:")
+        for index, record in enumerate(records, start=1):
+            print(f"  {index}. {describe_certificate(record)}")
+        print(
+            "\nSelect one with, for example:\n"
+            "  avd4linux --piv-cert 01\n"
+            "  avd4linux --piv-cert 'PIV Authentication'\n"
+            "  avd4linux --piv-cert auto"
+        )
+        return 0
+
+    def _save_certificate_selector(self, selector: str) -> None:
+        """Persists the user's smart card certificate choice."""
+        from .settings import Settings
+
+        settings = Settings.load()
+        settings.piv_certificate_selector = "" if selector.strip().lower() == "auto" else selector
+        if settings.save():
+            if settings.piv_certificate_selector:
+                logger.info("Saved smart card certificate selector: %s", settings.piv_certificate_selector)
+            else:
+                logger.info("Cleared smart card certificate selector; using automatic PIV selection")
+
     def do_command_line(self, command_line: Gio.ApplicationCommandLine) -> int:
         args = command_line.get_arguments()
         parser = build_arg_parser(default_cloud=self.initial_cloud)
@@ -185,6 +253,12 @@ class AVDApplication(Adw.Application):
             # level, so this is what makes its WLOG output visible here.
             logging.getLogger("avd4linux").setLevel(logging.DEBUG)
             logger.debug("Verbose logging enabled (DEBUG)")
+
+        if parsed.list_smartcard_certs:
+            return self._list_smartcard_certs()
+
+        if parsed.piv_cert is not None:
+            self._save_certificate_selector(parsed.piv_cert)
 
         self.initial_cloud = parsed.cloud
         self.activate()

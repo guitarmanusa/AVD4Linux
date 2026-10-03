@@ -28,6 +28,10 @@ class Settings:
     microphone_enabled: bool = False
     webcam_enabled: bool = False
     sound_enabled: bool = True
+    # Empty means "auto-select the PIV Authentication certificate". Otherwise this
+    # holds a user-supplied selector: an exact label, a label substring, a hex
+    # object ID, or a full pkcs11: URI.
+    piv_certificate_selector: str = ""
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":
@@ -60,6 +64,7 @@ class Settings:
             microphone_enabled=cls._read_bool(data, "microphone_enabled", False),
             webcam_enabled=cls._read_bool(data, "webcam_enabled", False),
             sound_enabled=cls._read_bool(data, "sound_enabled", True),
+            piv_certificate_selector=cls._read_str(data, "piv_certificate_selector", ""),
         )
 
     def save(self, path: Path | None = None) -> bool:
@@ -73,6 +78,7 @@ class Settings:
             "microphone_enabled": self.microphone_enabled,
             "webcam_enabled": self.webcam_enabled,
             "sound_enabled": self.sound_enabled,
+            "piv_certificate_selector": self.piv_certificate_selector,
         }
         try:
             # Only tighten permissions on a directory we create ourselves; never
@@ -116,4 +122,15 @@ class Settings:
         if isinstance(value, bool):
             return value
         logger.warning("Ignoring non-boolean value for %s: %r", key, value)
+        return default
+
+    @staticmethod
+    def _read_str(data: dict, key: str, default: str) -> str:
+        """Reads a string key, ignoring absent or wrongly-typed entries."""
+        if key not in data:
+            return default
+        value = data[key]
+        if isinstance(value, str):
+            return value
+        logger.warning("Ignoring non-string value for %s: %r", key, value)
         return default

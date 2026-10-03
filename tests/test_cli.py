@@ -79,6 +79,52 @@ class TestExistingFlagsPreserved(unittest.TestCase):
         args, unknown = self.parser.parse_known_args(["--future-flag", "x"])
         self.assertIn("--future-flag", unknown)
 
+    def test_piv_cert_selector_defaults_to_unset(self):
+        self.assertIsNone(self.parser.parse_args([]).piv_cert)
+
+    def test_piv_cert_accepts_any_selector_form(self):
+        for value in ("01", "0x01", "PIV Authentication", "pkcs11:token=x;id=%01;type=cert", "auto"):
+            self.assertEqual(self.parser.parse_args(["--piv-cert", value]).piv_cert, value)
+
+    def test_empty_piv_cert_forces_auto_selection(self):
+        self.assertEqual(self.parser.parse_args(["--piv-cert", ""]).piv_cert, "")
+
+    def test_list_smartcard_certs_flag(self):
+        self.assertTrue(self.parser.parse_args(["--list-smartcard-certs"]).list_smartcard_certs)
+        self.assertFalse(self.parser.parse_args([]).list_smartcard_certs)
+
+
+class TestCertificateSelectorPersistence(unittest.TestCase):
+    """--piv-cert must round-trip through the settings file."""
+
+    def test_selector_saved_and_reloaded(self):
+        import tempfile
+        from pathlib import Path
+
+        from avd4linux.settings import Settings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            self.assertEqual(Settings.load(path).piv_certificate_selector, "")
+
+            settings = Settings.load(path)
+            settings.piv_certificate_selector = "PIV Authentication"
+            self.assertTrue(settings.save(path))
+
+            self.assertEqual(Settings.load(path).piv_certificate_selector, "PIV Authentication")
+
+    def test_non_string_selector_ignored(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from avd4linux.settings import Settings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text(json.dumps({"piv_certificate_selector": 17}), encoding="utf-8")
+            self.assertEqual(Settings.load(path).piv_certificate_selector, "")
+
 
 if __name__ == "__main__":
     unittest.main()

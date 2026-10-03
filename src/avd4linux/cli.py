@@ -46,6 +46,26 @@ def build_arg_parser(default_cloud: str = "dod") -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--piv-cert",
+        metavar="SELECTOR",
+        help=(
+            "Choose which smart card certificate to present for Entra ID "
+            "certificate-based authentication. Accepts an exact label, a label "
+            "substring, a hex object ID (e.g. 01), or a full pkcs11: URI. "
+            "Defaults to the saved preference, or automatic PIV Authentication "
+            "selection when unset. Use --piv-cert '' to force automatic selection."
+        ),
+    )
+    parser.add_argument(
+        "--list-smartcard-certs",
+        action="store_true",
+        help=(
+            "Print every certificate the smart card exposes (object ID, label and "
+            "PKCS#11 URI), then exit. Use this to choose a value for --piv-cert."
+        ),
+    )
+
     mic_group = parser.add_mutually_exclusive_group()
     mic_group.add_argument(
         "--enable-microphone",
