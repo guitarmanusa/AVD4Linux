@@ -46,6 +46,34 @@ def _configure_pkcs11_provider() -> None:
     if os.path.exists(opensc_conf):
         os.environ.setdefault("OPENSC_CONF", opensc_conf)
 
+    # Register the provider with p11-kit too. Our own enumeration passes
+    # --provider to p11tool and never consults p11-kit, but
+    # Gio.TlsCertificate.new_from_pkcs11_uris() has no provider override and
+    # resolves the URI through p11-kit, so without this GIO fails with "The
+    # requested data were not available" and no client certificate is presented.
+    #
+    # p11-kit reads module definitions from exactly three compiled-in
+    # directories: /etc/pkcs11/modules, /usr/share/p11-kit/modules and
+    # ~/.config/pkcs11/modules. It does not scan XDG data dirs, so a module file
+    # installed into the app's own /app/etc tree is silently ignored. Inside the
+    # sandbox /etc is writable and session-scoped, and is also where flatpak
+    # itself drops its p11-kit-trust.module -> p11-kit-client.so override.
+    try:
+        os.makedirs("/etc/pkcs11/modules", exist_ok=True)
+        with open("/etc/pkcs11/modules/opensc.module", "w") as f:
+            f.write(f"module: {provider}\npriority: 100\n")
+        logger.info("Registered OpenSC provider %s with p11-kit", provider)
+    except Exception as e:
+        logger.debug("Could not register the OpenSC provider with p11-kit: %s", e)
+
+    # Keep p11-kit from also reading the user's ~/.config/pkcs11/modules, so the
+    # only registrations in effect are the sandbox's own.
+    try:
+        with open("/etc/pkcs11/pkcs11.conf", "w") as f:
+            f.write("user-config: none\n")
+    except Exception as e:
+        logger.debug("Could not write /etc/pkcs11/pkcs11.conf: %s", e)
+
     # Configure GnuTLS to auto-load the native OpenSC provider across all sandbox
     # processes (including WebKitNetworkProcess) so certificate requests issued
     # in another process still reach the hardware token.

@@ -1,6 +1,6 @@
 app-id: org.avd4linux.AVD4Linux
 runtime: org.gnome.Platform
-runtime-version: '47'
+runtime-version: '51'
 sdk: org.gnome.Sdk
 command: avd4linux
 
@@ -84,6 +84,16 @@ modules:
       # -Werror=maybe-uninitialized under strict mode with the SDK's GCC. The
       # fuzzers are not part of the library, so relax strict mode instead.
       - --disable-strict
+      # Left to itself, configure resolves the bash completion directory with
+      # `pkg-config --variable=completionsdir bash-completion`, which yields the
+      # absolute path baked into the SDK's bash-completion.pc
+      # (/usr/share/bash-completion/completions). The SDK filesystem is
+      # read-only, so `make install` dies there with "Read-only file system".
+      # The GNOME 51 SDK ships bash-completion.pc and the GNOME 47 one did not,
+      # so this only started failing on the runtime upgrade. Passing the path
+      # explicitly skips the detection branch (configure only probes pkg-config
+      # when completiondir is still the literal value "detect").
+      - --with-completiondir=/app/share/bash-completion/completions
     sources:
       - type: archive
         url: https://github.com/OpenSC/OpenSC/releases/download/0.25.1/opensc-0.25.1.tar.gz
@@ -99,7 +109,7 @@ modules:
           release-url-template: https://github.com/OpenSC/OpenSC/releases/tag/$version
 
   # 3. json-c. FreeRDP's -DWITH_AAD=ON hard-fails unless WITH_WINPR_JSON is on,
-  #    which requires one of json-c / cJSON / jansson. The GNOME 47 SDK ships
+  #    which requires one of json-c / cJSON / jansson. The GNOME 51 SDK ships
   #    none of them, so the AAD (Entra ID auth) support this app depends on
   #    would otherwise be impossible to build.
   - name: json-c
@@ -129,51 +139,89 @@ modules:
           url-query: .assets[] | select(.name == ("json-c-" + $version + ".tar.gz")) | .browser_download_url
           release-url-template: https://github.com/json-c/json-c/releases/tag/$tag
 
-  # 4. libusb-1.0. Required even for webcam-only redirection:
-  #    channels/rdpecam/client/v4l/CMakeLists.txt includes LIBUSB_1_INCLUDE_DIR
-  #    unconditionally, and the urbdrc channel pulls it in as well. The GNOME 47
-  #    SDK ships libusb runtime but no -dev headers, so CMake leaves
-  #    LIBUSB_1_INCLUDE_DIR-NOTFOUND and the generate step fails.
-  - name: libusb
-    # The 1.0.27 release tarball ships a pre-generated ./configure and has no
-    # meson.build, so use autotools via flatpak-builder's simple buildsystem.
-    buildsystem: autotools
+  # 4. OpenH264. Cisco's H.264 encoder, and the only thing that actually encodes
+  #    the MS-RDPECAM webcam stream (ffmpeg's encoder path is hardware-only).
+  #
+  #    This used to come from the SDK, but the freedesktop SDK dropped openh264
+  #    in the 25.08 base that GNOME 49+ is built on. It went two ways: the
+  #    org.freedesktop.Platform.openh264 extension was retired after 23.08.30, and
+  #    the SDK copy is now gone entirely -- openh264 is not in the 25.08/26.08
+  #    components list at all, and the codecs-extra runtime extension that
+  #    replaced the old openh264/ffmpeg-full extensions carries no openh264 and,
+  #    being a runtime extension, no build headers either. FreeRDP refuses to
+  #    configure without it ("OpenH264 support requested but not detected"), so
+  #    it has to be built here. Verified absent from org.gnome.Sdk//51: no
+  #    wels/codec_api.h and no libopenh264.so.
+  #
+  #    Building from source is the whole reason this is acceptable. Cisco
+  #    publishes openh264 binaries that Flatpak refuses to redistribute (no
+  #    signatures, unreliable hosting, and the CVE below), which is why upstream
+  #    removed it. The source is BSD-2-Clause, so building it ourselves sidesteps
+  #    every one of those problems -- and 2.6.0 is the release that fixes
+  #    GHSA-m99q-5j7x-7m9x, the remote-code-execution advisory that forced the
+  #    upstream removal in the first place.
+  - name: openh264
+    buildsystem: meson
     config-opts:
-      - --disable-static
-      - --enable-shared
-      - --disable-examples
-      - --disable-tests
+      - --libdir=lib
+      - --buildtype=release
+    # No post-install fixup needed: meson names the pkg-config file after the
+    # project, so this installs /app/lib/pkgconfig/openh264.pc -- which is
+    # exactly the module name FreeRDP's cmake/FindOpenH264.cmake asks pkg-config
+    # for. OPENH264_ROOT is still passed below as a fallback for the
+    # find_path/find_library branch in case that ever changes.
     sources:
       - type: archive
-        url: https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2
-        sha256: ffaa41d741a8a3bee244ac8e54a72ea05bf2879663c098c82fc5757853441575
+        url: https://github.com/cisco/openh264/archive/refs/tags/v2.6.0.tar.gz
+        sha256: 558544ad358283a7ab2930d69a9ceddf913f4a51ee9bf1bfb9e377322af81a69
+        # Cisco publishes no binary assets on the GitHub release, so build from
+        # the source tarball that GitHub generates for the tag.
         x-checker-data:
           type: json
-          url: https://api.github.com/repos/libusb/libusb/releases/latest
+          url: https://api.github.com/repos/cisco/openh264/releases/latest
           tag-query: .tag_name
           version-query: $tag | sub("^v"; "")
-          url-query: .assets[] | select(.name == ("libusb-" + $version + ".tar.bz2")) | .browser_download_url
-          release-url-template: https://github.com/libusb/libusb/releases/tag/v$version
+          url-template: https://github.com/cisco/openh264/archive/refs/tags/v$version.tar.gz
+          release-url-template: https://github.com/cisco/openh264/releases/tag/v$version
+
+  # libusb-1.0 is also required by the rdpecam v4l channel
+  # (channels/rdpecam/client/v4l/CMakeLists.txt includes LIBUSB_1_INCLUDE_DIR
+  # unconditionally, and urbdrc pulls it in as well). It used to be a local module
+  # because the 24.08 base shipped the libusb runtime without -dev headers, but
+  # the 25.08 base added them. Verified in org.gnome.Sdk//51: both
+  # /usr/include/libusb-1.0/libusb.h and libusb-1.0.pc (1.0.30) are present, so no
+  # local module is needed any more.
 
   # 5. FreeRDP 3 (RDP client with Smart Card, AAD and webcam redirection)
   #
-  #    The GNOME 47 SDK already provides the whole MS-RDPECAM dependency set:
-  #    libv4l2 (+ linux/videodev2.h) for capture, openh264 (+ wels/codec_api.h)
-  #    for the H.264 encoder, and ffmpeg/libswscale. Nothing extra needs to be
-  #    built. The ffmpeg encoder path is hardware-only (VAAPI/VDPAU/Vulkan), so
-  #    openh264 is what actually encodes the webcam stream.
+  #    The SDK provides most of the MS-RDPECAM dependency set: libv4l2 with
+  #    linux/videodev2.h for capture, and ffmpeg/libswscale for scaling. The ffmpeg
+  #    encoder path is hardware-only (VAAPI/VDPAU/Vulkan), so openh264 is what
+  #    actually encodes the webcam stream -- see the openh264 module above.
+  #    Verified in org.gnome.Sdk//51: videodev2.h, libv4l2.pc, libswscale.pc and
+  #    libavcodec.pc are all present.
   - name: freerdp3
     # Not buildsystem: cmake-ninja -- that runs cmake in the source directory,
     # and FreeRDP 3.32 hard-fails an in-source build
     # (cmake/PreventInSourceBuilds.cmake). Building into a subdirectory keeps
     # upstream's check satisfied instead of setting its deprecated
     # ALLOW_IN_SOURCE_BUILD escape hatch.
+    #
+    # The client we ship is xfreerdp only, so the SDL client is turned off. It
+    # defaults to ON and client/SDL/SDL2/dialogs/CMakeLists.txt then hard-requires
+    # SDL2_ttf, which the GNOME 51 SDK no longer provides (it configured fine on
+    # GNOME 47). Disabling it also drops a dependency this app never uses.
     buildsystem: simple
     build-options:
       append-path: /usr/lib/x86_64-linux-gnu
       prepend-ld-library-path: /usr/lib/x86_64-linux-gnu
       env:
         CFLAGS: -Wno-error
+    # OPENH264_ROOT points cmake/FindOpenH264.cmake's find_path/find_library at
+    # the openh264 module's install prefix, since /app is not on CMake's default
+    # search path on its own. It is a fallback: the module also installs
+    # /app/lib/pkgconfig/openh264.pc, which satisfies the pkg_check_modules call
+    # that same file makes first.
     build-commands:
       - >-
         cmake -B build -S . -G Ninja
@@ -190,6 +238,7 @@ modules:
         -DWITH_CAIRO=ON
         -DWITH_AAD=ON
         -DWITH_CLIENT_COMMON=ON
+        -DWITH_CLIENT_SDL=OFF
         -DWITH_SERVER=OFF
         -DWITH_CHANNELS=ON
         -DWITH_FUSE=OFF
@@ -200,6 +249,7 @@ modules:
         -DWITH_SWSCALE=ON
         -DWITH_V4L=ON
         -DCHANNEL_RDPECAM_CLIENT=ON
+        -DOPENH264_ROOT=/app
       - cmake --build build
     post-install:
       - cmake --install build
@@ -244,9 +294,13 @@ modules:
       - install -Dm644 data/org.avd4linux.AVD4Linux.metainfo.xml ${FLATPAK_DEST}/share/metainfo/org.avd4linux.AVD4Linux.metainfo.xml
       - install -Dm644 data/org.avd4linux.AVD4Linux.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.avd4linux.AVD4Linux.svg
       - install -Dm644 data/opensc.conf ${FLATPAK_DEST}/etc/opensc.conf
-      - install -Dm644 data/pkcs11.conf ${FLATPAK_DEST}/etc/pkcs11/pkcs11.conf
-      - install -Dm644 data/opensc.module ${FLATPAK_DEST}/etc/pkcs11/modules/opensc.module
-      - install -Dm644 data/p11-kit-trust.module ${FLATPAK_DEST}/etc/pkcs11/modules/p11-kit-trust.module
+      # p11-kit configuration is written at runtime by
+      # avd4linux.app._configure_pkcs11_provider() rather than installed here.
+      # p11-kit only reads /etc/pkcs11/{pkcs11.conf,modules/}, and inside the
+      # sandbox /etc is a writable per-session directory while /app/etc is not
+      # one of the paths it scans -- so files installed under ${FLATPAK_DEST}/etc
+      # are never read. Registering the provider also has to happen at runtime
+      # because the provider path is discovered, not fixed.
     sources:
       - type: dir
         path: ../..

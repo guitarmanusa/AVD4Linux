@@ -238,6 +238,15 @@ class TestUserCertificateSelection(unittest.TestCase):
         chosen = select_certificate(self.RECORDS)
         self.assertEqual(chosen["url"], CAC_PIV_URI)
 
+    def test_literal_auto_means_automatic_selection(self):
+        # --list-smartcard-certs tells the user to run `--piv-cert auto`, so the
+        # literal word has to resolve to the automatic choice rather than being
+        # parsed as a label or a hex object ID.
+        for spelling in ("auto", "AUTO", "Auto", "  auto  "):
+            with self.subTest(spelling=spelling):
+                chosen = select_certificate(self.RECORDS, spelling)
+                self.assertEqual(chosen["url"], CAC_PIV_URI)
+
     def test_select_by_object_id(self):
         chosen = select_certificate(self.RECORDS, "02")
         self.assertEqual(_uri_object_id(chosen["url"]), "02")
@@ -284,6 +293,15 @@ class TestUserCertificateSelection(unittest.TestCase):
                 mock.patch("subprocess.run", return_value=_run(CAC_LISTING)), \
                 mock.patch.object(smartcard, "find_opensc_provider", return_value="/app/lib/opensc-pkcs11.so"), \
                 mock.patch.object(Settings, "load", return_value=Settings()):
+            self.assertEqual(get_piv_certificate_uri(), CAC_PIV_URI)
+
+    def test_uri_treats_literal_auto_as_no_selector(self):
+        # A saved preference of "auto" must behave like none at all, otherwise the
+        # saved value is parsed as a label and resolution fails outright.
+        with mock.patch("shutil.which", return_value="/usr/bin/p11tool"), \
+                mock.patch("subprocess.run", return_value=_run(CAC_LISTING)), \
+                mock.patch.object(smartcard, "find_opensc_provider", return_value="/app/lib/opensc-pkcs11.so"), \
+                mock.patch.object(Settings, "load", return_value=Settings(piv_certificate_selector="auto")):
             self.assertEqual(get_piv_certificate_uri(), CAC_PIV_URI)
 
 

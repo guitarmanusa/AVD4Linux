@@ -1,3 +1,0 @@
-module: p11-kit-trust.so
-priority: 1
-trust-policy: yes

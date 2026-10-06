@@ -1,2 +1,0 @@
-module: /app/lib/opensc-pkcs11.so
-priority: 100

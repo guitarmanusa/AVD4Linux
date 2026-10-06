@@ -301,12 +301,14 @@ def select_certificate(records: list, selector: Optional[str] = None) -> Optiona
     on their own, because the system trust store reuses similar wording.
 
     A selector lets the user override that choice with an exact label, a label
-    substring, an object ID in hex, or a full ``pkcs11:`` URI.
+    substring, an object ID in hex, or a full ``pkcs11:`` URI. The literal
+    ``auto`` (case-insensitive) means the automatic choice, because that is what
+    ``--list-smartcard-certs`` tells the user to type to go back to it.
     """
     if not records:
         return None
 
-    if selector:
+    if selector and selector.strip().lower() != "auto":
         needle = selector.strip()
         if needle.lower().startswith("pkcs11:"):
             for record in records:
@@ -357,7 +359,8 @@ def get_piv_certificate_uri(selector: Optional[str] = None) -> Optional[str]:
     """Resolves the PKCS#11 URI of the client certificate to present.
 
     ``selector`` defaults to the user's saved ``piv_certificate_selector``
-    preference. Pass an empty string to force automatic selection.
+    preference. Pass an empty string, or the literal ``auto``, to force
+    automatic selection.
     """
     if selector is None:
         try:
@@ -367,6 +370,9 @@ def get_piv_certificate_uri(selector: Optional[str] = None) -> Optional[str]:
         except Exception as e:
             logger.debug("Could not read saved certificate selector: %s", e)
             selector = ""
+
+    if selector and selector.strip().lower() == "auto":
+        selector = ""
 
     records = enumerate_hardware_certificates()
     if not records:
