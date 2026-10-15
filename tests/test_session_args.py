@@ -421,3 +421,42 @@ class TestSecurityGuards(unittest.TestCase):
         self.assertTrue(callable(_pin_bridge.authenticate_pin))
         with self.assertRaises(ValueError):
             _pin_bridge.authenticate_pin(None, None)
+
+    def test_parse_cert_trust_prompt_initial(self):
+        from avd4linux.session_manager import parse_cert_trust_prompt
+        buf = (
+            "Certificate details for rdgateway-r1.wvd.azure.us:443 (RDP-Gateway):\n"
+            "\tCommon Name: *.wvd.azure.us\n"
+            "\tSubject:     CN=*.wvd.azure.us\n"
+            "\tIssuer:      Microsoft TLS G2 RSA CA OCSP 16\n"
+            "\tThumbprint:  b5:7b:24:c7:9d:c6:06:39:93:4f:47:4a:5a:90:45:cd:13:7e:5d:db:13:7a:e6:a3:4c:bc:91:e2:aa:13:d0:ff\n"
+            "The above X.509 certificate could not be verified...\n"
+            "Do you trust the above certificate? (Y/T/N)"
+        )
+        info = parse_cert_trust_prompt(buf)
+        self.assertEqual(info["host"], "rdgateway-r1.wvd.azure.us")
+        self.assertEqual(info["fingerprint"], "b5:7b:24:c7:9d:c6:06:39:93:4f:47:4a:5a:90:45:cd:13:7e:5d:db:13:7a:e6:a3:4c:bc:91:e2:aa:13:d0:ff")
+        self.assertEqual(info["issuer"], "Microsoft TLS G2 RSA CA OCSP 16")
+
+    def test_parse_cert_trust_prompt_changed_certificate(self):
+        from avd4linux.session_manager import parse_cert_trust_prompt
+        from avd4linux.clouds import is_trusted_avd_host
+        buf = (
+            "!!!Certificate for rdgateway-r1.wvd.azure.us:443 (RDP-Gateway) has changed!!!\n\n"
+            "New Certificate details:\n"
+            "\tCommon Name: *.wvd.azure.us\n"
+            "\tSubject:     CN=*.wvd.azure.us\n"
+            "\tIssuer:      Microsoft TLS G2 RSA CA OCSP 16\n"
+            "\tThumbprint:  b5:7b:24:c7:9d:c6:06:39:93:4f:47:4a:5a:90:45:cd:13:7e:5d:db:13:7a:e6:a3:4c:bc:91:e2:aa:13:d0:ff\n\n"
+            "Old Certificate details:\n"
+            "\tSubject:     CN=*.wvd.azure.us\n"
+            "\tIssuer:      Microsoft TLS G2 RSA CA OCSP 16\n"
+            "\tThumbprint:  98:A7:97:C4:A8:55:06:57:C6:9F:88:5A:6B:9C:A8:89:72:5C:32:87:6F:51:F5:C5:49:4A:70:B6:9F:22:1B:61\n\n"
+            "The above X.509 certificate does not match the certificate used for previous connections.\n"
+            "Do you trust the above certificate? (Y/T/N)"
+        )
+        info = parse_cert_trust_prompt(buf)
+        self.assertEqual(info["host"], "rdgateway-r1.wvd.azure.us")
+        self.assertEqual(info["fingerprint"], "b5:7b:24:c7:9d:c6:06:39:93:4f:47:4a:5a:90:45:cd:13:7e:5d:db:13:7a:e6:a3:4c:bc:91:e2:aa:13:d0:ff")
+        self.assertTrue(is_trusted_avd_host(info["host"]))
+

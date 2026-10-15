@@ -45,9 +45,18 @@
   <content_rating type="oars-1.1"/>
 
     <releases>
-    <release version="0.2.7" date="2026-10-06">
-    <release version="0.2.6" date="2026-10-02">
-    <release version="0.2.0" date="2026-09-28">
-    <release version="0.1.0" date="2026-09-24">
+    <release version="0.2.8" date="2026-10-15">
+      <description>
+        <p>Support FreeRDP changed certificate prompts and document certificate cache clearing:</p>
+        <ul>
+          <li>Parse 'Certificate for host has changed' FreeRDP banners to handle AVD gateway certificate rotations and resource migrations.</li>
+          <li>Document FreeRDP certificate store troubleshooting and cache clearing in README.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.2.7" date="2026-10-06"/>
+    <release version="0.2.6" date="2026-10-02"/>
+    <release version="0.2.0" date="2026-09-28"/>
+    <release version="0.1.0" date="2026-09-24"/>
   </releases>
 </component>

@@ -448,6 +448,43 @@ The choice is stored in `~/.config/avd4linux/settings.json` as `piv_certificate_
 
 ---
 
+## Troubleshooting
+
+### TLS Certificate Validation Error / Clearing the Certificate Cache
+
+When connecting to Azure Virtual Desktop, FreeRDP caches remote gateway and session host TLS certificates locally using Trust-On-First-Use (TOFU). If Microsoft rotates a gateway certificate, or if your Azure account is reassigned to new host pools or cloud infrastructure resources, FreeRDP may detect that the presented certificate differs from the certificate previously cached on disk.
+
+If you encounter an untrusted TLS certificate challenge or certificate mismatch error such as:
+
+```text
+TLS Certificate Validation Error: Aborted connection to <host> (SHA-256 fingerprint: ...)
+SECURITY VIOLATION: Rejecting untrusted TLS certificate challenge for host: Unknown Gateway ...
+```
+
+You can clear stale cached server certificates so FreeRDP can re-establish trust with the updated endpoint:
+
+**Flatpak installs:**
+```bash
+# Clear certificates for a specific host:
+rm -f ~/.var/app/org.avd4linux.AVD4Linux/config/freerdp/server/<hostname>_*.pem
+
+# Or clear all cached FreeRDP server certificates:
+rm -f ~/.var/app/org.avd4linux.AVD4Linux/config/freerdp/server/*.pem
+```
+
+**Native / Source installs:**
+```bash
+# Clear certificates for a specific host:
+rm -f ~/.config/freerdp/server/<hostname>_*.pem
+
+# Or clear all cached FreeRDP server certificates:
+rm -f ~/.config/freerdp/server/*.pem
+```
+
+On your next connection attempt, FreeRDP will receive the updated certificate, and AVD4Linux will automatically verify and accept certificates belonging to trusted Microsoft AVD infrastructure domains.
+
+---
+
 ## License
 
 This project is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) for details.

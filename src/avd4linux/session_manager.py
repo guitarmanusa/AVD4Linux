@@ -266,7 +266,11 @@ def parse_cert_trust_prompt(buf: str) -> dict[str, str]:
     """Extracts server certificate details from FreeRDP certificate trust prompt output."""
     import re
     details = {"host": "Unknown Gateway", "subject": "", "issuer": "", "fingerprint": ""}
-    m_host = re.search(r"Certificate details for ([^\s:]+)", buf) or re.search(r"The hostname used for this connection \(([^)]+)\)", buf)
+    m_host = (
+        re.search(r"Certificate(?: details)? for ([^\s:]+)", buf)
+        or re.search(r"The hostname used for this connection \(([^)]+)\)", buf)
+        or re.search(r"The host key for ([^\s:]+)", buf)
+    )
     if m_host:
         details["host"] = m_host.group(1).strip()
     m_sub = re.search(r"Subject:\s*([^\n]+)", buf)
