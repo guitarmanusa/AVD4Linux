@@ -26,6 +26,8 @@ env/
 .flatpak-builder/
 .flatpak-builder-build/
 flatpak-builder-repo/
+build-dir/
+repo/
 
 # Built Flatpak bundles and local OCI repos
 *.flatpak
