@@ -207,7 +207,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Gdk", "4.0")
 gi.require_version("WebKit", "6.0")
-from gi.repository import Adw, Gdk, Gio, GLib, WebKit
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, WebKit
 
 from .window import AVDMainWindow
 
@@ -224,6 +224,34 @@ class AVDApplication(Adw.Application):
         )
         self.initial_cloud = initial_cloud
         self.window: AVDMainWindow | None = None
+
+        self._setup_actions()
+
+    def _setup_actions(self) -> None:
+        """Configures application-level actions."""
+        about_action = Gio.SimpleAction.new("about", None)
+        about_action.connect("activate", self._on_about_action)
+        self.add_action(about_action)
+
+    def _on_about_action(self, action: Gio.SimpleAction, parameter: object) -> None:
+        """Presents an Adw.AboutWindow conforming to GNOME Human Interface Guidelines."""
+        from .version import __version__
+
+        about = Adw.AboutWindow(
+            transient_for=self.window,
+            modal=True,
+            application_name="AVD4Linux",
+            application_icon="org.avd4linux.AVD4Linux",
+            developer_name="AVD4Linux Project",
+            version=__version__,
+            comments="Native Linux client for Azure Virtual Desktop with Smart Card redirection",
+            website="https://github.com/guitarmanusa/AVD4Linux",
+            issue_url="https://github.com/guitarmanusa/AVD4Linux/issues",
+            license_type=Gtk.License.APACHE_2_0,
+            copyright="© 2024-2026 AVD4Linux Project Contributors",
+            developers=["AVD4Linux Project Contributors"],
+        )
+        about.present()
 
     def do_activate(self) -> None:
         if not self.window:

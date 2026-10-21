@@ -45,6 +45,11 @@
   <content_rating type="oars-1.1"/>
 
     <releases>
+    <release version="0.2.8.1" date="2026-10-20">
+      <description>
+        <p>Add About dialog displaying version and project details aligning with GNOME HIG.</p>
+      </description>
+    </release>
     <release version="0.2.8" date="2026-10-15">
       <description>
         <p>Support FreeRDP changed certificate prompts and document certificate cache clearing:</p>

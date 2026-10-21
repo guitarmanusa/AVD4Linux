@@ -10,7 +10,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("WebKit", "6.0")
-from gi.repository import Adw, Gdk, GLib, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from .browser import AVDBrowserView
 from .clouds import CLOUDS, CloudProfile, get_cloud
@@ -102,6 +102,16 @@ class AVDMainWindow(Adw.ApplicationWindow):
         self.sc_button.set_child(self.sc_box)
         self.sc_button.set_tooltip_text("Smart Card / CAC Redirection Status")
         self.header_bar.set_title_widget(self.sc_button)
+
+        # Primary Application Menu
+        primary_menu = Gio.Menu()
+        primary_menu.append("About AVD4Linux", "app.about")
+
+        self.btn_menu = Gtk.MenuButton()
+        self.btn_menu.set_icon_name("open-menu-symbolic")
+        self.btn_menu.set_menu_model(primary_menu)
+        self.btn_menu.set_tooltip_text("Main Menu")
+        self.header_bar.pack_end(self.btn_menu)
 
         # Right side actions
         right_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
