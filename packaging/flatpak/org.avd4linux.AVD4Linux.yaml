@@ -32,6 +32,7 @@ finish-args:
   # Downloads & Configuration
   - --filesystem=xdg-download
   - --filesystem=~/.config/avd4linux:create
+  - --filesystem=~/.local/share/avd4linux:create
 
   # WebKitGTK cannot create a nested user namespace inside the Flatpak sandbox
   # (verified: bwrap is absent from the runtime and unprivileged userns is
