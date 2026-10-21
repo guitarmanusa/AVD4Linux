@@ -150,12 +150,11 @@ class AVDMainWindow(Adw.ApplicationWindow):
         # Initial Load
         self._load_current_cloud()
 
+        # Report host device availability once at startup
+        self._smartcard_absence_logged = False
         # Start Smart Card status polling
         GLib.timeout_add_seconds(2, self._poll_smartcard)
         self._poll_smartcard()
-
-        # Report host device availability once at startup
-        self._smartcard_absence_logged = False
         log_device_availability(
             microphone_enabled=self.settings.microphone_enabled,
             webcam_enabled=self.settings.webcam_enabled,
@@ -211,7 +210,12 @@ class AVDMainWindow(Adw.ApplicationWindow):
 
     def _log_smartcard_availability(self, status: SmartCardStatus) -> None:
         """Logs the absence of a PC/SC reader once, rather than on every poll."""
-        if status.has_reader or self._smartcard_absence_logged:
+        if getattr(self, "_smartcard_absence_logged", False):
+            if status.has_reader:
+                return
+            return
+        if status.has_reader:
+            self._smartcard_absence_logged = True
             return
         self._smartcard_absence_logged = True
         logger.info(
